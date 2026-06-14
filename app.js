@@ -417,22 +417,6 @@ function renderOrderDetail() {
     <span class="text-2xl font-bold text-amber-400">$${subtotal.toLocaleString()}</span>
   </div>
 
-  <!-- 完工照片區 -->
-  <div class="card mt-4">
-    <div class="flex justify-between items-center mb-3">
-      <span class="section-title">完工照片</span>
-      <label class="btn btn-ghost text-sm cursor-pointer">
-        上傳
-        <input type="file" accept="image/*" capture="environment" class="hidden"
-          onchange="uploadPhoto('${orderNo}', this)">
-      </label>
-    </div>
-    <div id="photoGrid" class="grid grid-cols-3 gap-2">
-      ${renderPhotoGrid(o['完工照片'], orderNo)}
-    </div>
-    <div id="uploadProgress" class="hidden mt-2 text-xs text-amber-400 text-center">上傳中…</div>
-  </div>
-
   <div class="grid grid-cols-2 gap-3 mt-4">
     <button class="btn btn-primary" onclick="savePDF('${orderNo}','invoice')">請款單 PDF</button>
     <button class="btn btn-ghost"   onclick="savePDF('${orderNo}','work')">生產工單 PDF</button>
@@ -486,12 +470,26 @@ function editItem(id) {
       <input id="ei_plate"  value="${it['車號']||''}"   placeholder="車號（選填）"/>
       <input id="ei_worker" value="${it['負責師傅']||''}" placeholder="負責師傅（選填）"/>
     </div>
-    <div class="flex justify-between items-center">
+    <div class="flex justify-between items-center mb-3">
       <span class="text-xs text-gray-400">金額：<span id="ei_amt" class="text-amber-400">$${Number(it['金額']).toLocaleString()}</span></span>
       <div class="flex gap-2">
         <button onclick="showView('orderDetail',state.viewOrder)" class="btn btn-ghost text-sm px-3">取消</button>
         <button onclick="saveItem('${id}')" class="btn btn-primary text-sm px-3">儲存</button>
       </div>
+    </div>
+    <div class="border-t border-gray-600 pt-3">
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-xs text-gray-400">完工照片</span>
+        <label class="btn btn-ghost text-xs cursor-pointer">
+          上傳
+          <input type="file" accept="image/*" capture="environment" class="hidden"
+            onchange="uploadItemPhoto('${id}','${it['訂單編號']}',this)">
+        </label>
+      </div>
+      <div id="itemPhotoGrid_${id}" class="grid grid-cols-3 gap-2">
+        ${renderItemPhotoGrid(it['完工照片'], id)}
+      </div>
+      <div id="itemUploadProg_${id}" class="hidden text-xs text-amber-400 text-center mt-1">上傳中…</div>
     </div>`;
 }
 
@@ -1130,7 +1128,52 @@ function queryStats() {
     </div>`;
 }
 
-// ── 完工照片 ────────────────────────────────
+// ── 品項完工照片 ─────────────────────────────
+function renderItemPhotoGrid(photoField, itemId) {
+  if (!photoField) return '<p class="text-gray-500 text-xs col-span-3">尚無照片</p>';
+  const urls = String(photoField).split(',').filter(u => u.trim());
+  if (!urls.length) return '<p class="text-gray-500 text-xs col-span-3">尚無照片</p>';
+  return urls.map((url, idx) => `
+    <div class="relative">
+      <a href="${url.trim()}" target="_blank">
+        <img src="${url.trim()}" class="w-full aspect-square object-cover rounded-lg border border-gray-600"/>
+      </a>
+      <button onclick="deleteItemPhoto('${itemId}',${idx})"
+        class="absolute top-1 right-1 bg-gray-700 text-amber-400 rounded-full w-6 h-6 text-xs flex items-center justify-center leading-none">✕</button>
+    </div>`).join('');
+}
+
+async function uploadItemPhoto(itemId, orderNo, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const prog = document.getElementById(`itemUploadProg_${itemId}`);
+  if (prog) prog.classList.remove('hidden');
+  const base64 = await compressImage(file, 1024);
+  const result = await api('uploadItemPhoto', null, { itemId, orderNo, base64, fileName: file.name });
+  if (prog) prog.classList.add('hidden');
+  input.value = '';
+  if (result.error) { showToast('上傳失敗：' + result.error, 'error'); return; }
+  const it = state.items.find(x => x['品項ID'] === itemId);
+  if (it) {
+    it['完工照片'] = (it['完工照片'] ? it['完工照片'] + ',' : '') + result.url;
+    const grid = document.getElementById(`itemPhotoGrid_${itemId}`);
+    if (grid) grid.innerHTML = renderItemPhotoGrid(it['完工照片'], itemId);
+  }
+  showToast('照片已上傳 ✓');
+}
+
+async function deleteItemPhoto(itemId, idx) {
+  const it = state.items.find(x => x['品項ID'] === itemId);
+  if (!it) return;
+  const urls = String(it['完工照片'] || '').split(',').filter(u => u.trim());
+  urls.splice(idx, 1);
+  it['完工照片'] = urls.join(',');
+  const grid = document.getElementById(`itemPhotoGrid_${itemId}`);
+  if (grid) grid.innerHTML = renderItemPhotoGrid(it['完工照片'], itemId);
+  await api('update', '品項', { key: itemId, data: { '完工照片': it['完工照片'] } });
+}
+
+// ── 完工照片（訂單層級，保留相容）──────────
 function renderPhotoGrid(photoField, orderNo) {
   if (!photoField) return '<p class="text-gray-500 text-xs col-span-3">尚無照片</p>';
   const urls = String(photoField).split(',').filter(u => u.trim());

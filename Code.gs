@@ -48,7 +48,8 @@ function handleRequest(e) {
       case 'saveSettings': result = saveSettings(body.data); break;
       case 'generatePDF': result = generateInvoicePDF(body.orderNo, body.type); break;
       case 'getPDFUrl':   result = getPDFUrl(body.orderNo, body.type); break;
-      case 'uploadPhoto': result = uploadPhoto(body.orderNo, body.base64, body.fileName); break;
+      case 'uploadPhoto':     result = uploadPhoto(body.orderNo, body.base64, body.fileName); break;
+      case 'uploadItemPhoto': result = uploadItemPhoto(body.itemId, body.orderNo, body.base64, body.fileName); break;
       case 'parseVoice':  result = parseVoiceWithAI(body.text, body.customers); break;
       default:          result = { error: 'Unknown action: ' + action };
     }
@@ -361,6 +362,46 @@ function uploadPhoto(orderNo, base64, fileName) {
     }
   }
 
+  return { success: true, url: imageUrl };
+}
+
+// ── 上傳品項完工照片 ─────────────────────────
+function uploadItemPhoto(itemId, orderNo, base64, fileName) {
+  const matches = base64.match(/^data:(.+);base64,(.+)$/);
+  if (!matches) return { error: '圖片格式錯誤' };
+  const mimeType = matches[1];
+  const data = matches[2];
+
+  const root = getRootFolder();
+  let photoRoot;
+  const pr = root.getFoldersByName('完工照片');
+  photoRoot = pr.hasNext() ? pr.next() : root.createFolder('完工照片');
+  let orderFolder;
+  const of = photoRoot.getFoldersByName(orderNo || itemId);
+  orderFolder = of.hasNext() ? of.next() : photoRoot.createFolder(orderNo || itemId);
+
+  const blob = Utilities.newBlob(Utilities.base64Decode(data), mimeType, fileName || 'photo.jpg');
+  const file = orderFolder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  const imageUrl = `https://lh3.googleusercontent.com/d/${file.getId()}`;
+
+  // 更新品項的「完工照片」欄位
+  const sheet = ss.getSheetByName('品項');
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  let photoCol = headers.indexOf('完工照片');
+  if (photoCol === -1) {
+    // 自動新增欄位
+    photoCol = headers.length;
+    sheet.getRange(1, photoCol + 1).setValue('完工照片');
+  }
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(itemId)) {
+      const existing = rows[i][photoCol] ? rows[i][photoCol] + ',' : '';
+      sheet.getRange(i + 1, photoCol + 1).setValue(existing + imageUrl);
+      break;
+    }
+  }
   return { success: true, url: imageUrl };
 }
 
