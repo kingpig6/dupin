@@ -391,7 +391,6 @@ function renderOrderDetail() {
       </select>
     </div>
     ${o['完工日期'] ? `<div class="text-xs text-amber-400 mb-1">完工日期：${o['完工日期']}</div>` : ''}
-    ${o['備註'] ? `<div class="text-sm text-gray-400">備註：${o['備註']}</div>` : ''}
   </div>
 
   <div class="section-title">品項清單</div>
@@ -642,11 +641,6 @@ function renderOrderForm() {
         <option ${o['收款狀態']==='已收款'?'selected':''}>已收款</option>
       </select>
     </div>
-    <div>
-      <label class="section-title">備註</label>
-      <textarea id="o_note" rows="2">${o['備註'] || ''}</textarea>
-    </div>
-
     ${isNew ? `
     <div class="mt-2">
       <div class="flex justify-between items-center mb-2">
@@ -905,7 +899,6 @@ async function saveOrder() {
     '交貨期限': document.getElementById('o_deadline').value,
     '狀態':     document.getElementById('o_status').value,
     '收款狀態': document.getElementById('o_pay').value,
-    '備註':     document.getElementById('o_note').value.trim(),
   };
   if (!data['訂單編號']) { showToast('請填訂單編號'); return; }
   if (!data['客戶'])     { showToast('請選擇客戶'); return; }
