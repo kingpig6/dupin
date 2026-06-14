@@ -265,12 +265,21 @@ function renderOrdersContent() {
   const orderCard = o => {
     const subtotal = orderSubtotal(o['訂單編號']);
     const deadline = o['交貨期限'] ? `· 交貨 ${o['交貨期限']}` : '';
+    // 品項摘要（最多顯示 3 項，超過顯示 +N）
+    const its = state.items.filter(it => it['訂單編號'] === o['訂單編號']);
+    const itemNames = its.map(it => it['品名']).filter(Boolean);
+    const shown = itemNames.slice(0, 3).join('、');
+    const more = itemNames.length > 3 ? ` 等 ${itemNames.length} 項` : '';
+    const itemLine = itemNames.length
+      ? `<div class="text-sm text-gray-300 mb-1 truncate">${shown}${more}</div>`
+      : '';
     return `
     <div class="card cursor-pointer" onclick="openOrder('${o['訂單編號']}')">
-      <div class="flex justify-between items-start mb-1">
-        <span class="font-semibold">${o['客戶'] || '-'}</span>
-        <span class="text-amber-400 font-bold">$${subtotal.toLocaleString()}</span>
+      <div class="flex justify-between items-start mb-0.5">
+        <span class="text-lg font-bold">${o['客戶'] || '-'}</span>
+        <span class="text-amber-400 font-bold text-lg">$${subtotal.toLocaleString()}</span>
       </div>
+      ${itemLine}
       <div class="text-xs text-gray-400 mb-2">${o['訂單編號']} · ${o['開單日期']} ${deadline}</div>
       <div class="flex gap-2">
         <span class="badge-${o['狀態']} text-white text-xs px-2 py-0.5 rounded-full">${o['狀態']}</span>
