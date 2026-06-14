@@ -170,7 +170,10 @@ const sectionOpen = { active: true, done: false, paid: false };
 
 function toggleSection(key) {
   sectionOpen[key] = !sectionOpen[key];
-  renderApp();
+  const el = document.getElementById('section-' + key);
+  const arrow = document.getElementById('arrow-' + key);
+  if (el) el.style.display = sectionOpen[key] ? '' : 'none';
+  if (arrow) arrow.textContent = sectionOpen[key] ? '▲' : '▼';
 }
 
 function renderOrders() {
@@ -214,18 +217,23 @@ function renderOrders() {
   const sectionHeader = (label, count, key) => `
     <div class="flex justify-between items-center cursor-pointer py-2 mt-2" onclick="toggleSection('${key}')">
       <span class="section-title mb-0">${label}（${count}）</span>
-      <span class="text-gray-400 text-lg">${sectionOpen[key] ? '▲' : '▼'}</span>
+      <span id="arrow-${key}" class="text-gray-400 text-lg">${sectionOpen[key] ? '▲' : '▼'}</span>
+    </div>`;
+
+  const sectionBody = (items, key, emptyMsg) => `
+    <div id="section-${key}" style="display:${sectionOpen[key] ? '' : 'none'}">
+      ${items.length ? items.map(orderCard).join('') : `<p class="text-gray-500 text-sm mb-4">${emptyMsg}</p>`}
     </div>`;
 
   return `
   ${sectionHeader('進行中', active.length, 'active')}
-  ${sectionOpen.active ? (active.length ? active.map(orderCard).join('') : '<p class="text-gray-500 text-sm mb-4">暫無進行中訂單</p>') : ''}
+  ${sectionBody(active, 'active', '暫無進行中訂單')}
 
   ${sectionHeader('完工交貨', done.length, 'done')}
-  ${sectionOpen.done ? (done.length ? done.map(orderCard).join('') : '<p class="text-gray-500 text-sm mb-4">暫無完工訂單</p>') : ''}
+  ${sectionBody(done, 'done', '暫無完工訂單')}
 
   ${sectionHeader('已交貨收款', paid.length, 'paid')}
-  ${sectionOpen.paid ? (paid.length ? paid.map(orderCard).join('') : '<p class="text-gray-500 text-sm mb-4">暫無已收款訂單</p>') : ''}`;
+  ${sectionBody(paid, 'paid', '暫無已收款訂單')}`;
 }
 
 function orderSubtotal(orderNo) {
