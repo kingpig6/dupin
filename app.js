@@ -40,8 +40,44 @@ async function api(action, sheet, extra = {}) {
   }
 }
 
+const CACHE_KEY = 'dupin_cache';
+
+function saveCache() {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      orders: state.orders,
+      customers: state.customers,
+      items: state.items,
+      settings: state.settings,
+      ts: Date.now(),
+    }));
+  } catch(e) {}
+}
+
+function loadCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return false;
+    const cache = JSON.parse(raw);
+    state.orders = cache.orders || [];
+    state.customers = cache.customers || [];
+    state.items = cache.items || [];
+    state.settings = cache.settings || {};
+    return true;
+  } catch(e) { return false; }
+}
+
 async function loadAll() {
-  showLoading(true);
+  // 先顯示快取資料（秒開）
+  const hasCached = loadCache();
+  if (hasCached) {
+    showLoading(false);
+    render();
+  } else {
+    showLoading(true);
+  }
+
+  // 背景更新
   const [o, c, i, s] = await Promise.all([
     api('getAll', '訂單'),
     api('getAll', '客戶'),
@@ -52,6 +88,7 @@ async function loadAll() {
   if (c.data) state.customers = c.data;
   if (i.data) state.items = i.data.map(normalizeItem);
   if (s.data) state.settings = s.data;
+  saveCache();
   showLoading(false);
   render();
 }
