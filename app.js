@@ -21,11 +21,13 @@ let state = {
   viewOrder: null,      // 正在查看詳細的訂單
   editCustomer: null,
   loading: false,
+  search: '',
 };
 
 // ── API 呼叫 ─────────────────────────────────
+const API_SECRET = 'dupin2026';
 async function api(action, sheet, extra = {}) {
-  const payload = { action, sheet, ...extra };
+  const payload = { action, sheet, secret: API_SECRET, ...extra };
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
@@ -39,6 +41,10 @@ async function api(action, sheet, extra = {}) {
     return { error: e.message };
   }
 }
+
+// ── 離線偵測 ────────────────────────────────
+window.addEventListener('online',  () => showToast('網路已恢復 ✓'));
+window.addEventListener('offline', () => showToast('目前離線，操作可能不會儲存', 'error'));
 
 const CACHE_KEY = 'dupin_cache';
 
@@ -214,9 +220,27 @@ function toggleSection(key) {
 }
 
 function renderOrders() {
+  return `
+  <div class="relative mb-3">
+    <input type="search" placeholder="搜尋客戶、訂單編號、車號…"
+      value="${state.search}"
+      oninput="state.search=this.value;document.getElementById('orderListContent').innerHTML=renderOrdersContent()"
+      class="w-full pl-9 pr-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500"/>
+    <span class="absolute left-3 top-2.5 text-gray-500 text-sm">🔍</span>
+  </div>
+  <div id="orderListContent">${renderOrdersContent()}</div>`;
+}
+
+function renderOrdersContent() {
+  const q = state.search.toLowerCase();
+  const match = o => !q || (o['客戶']||'').toLowerCase().includes(q) ||
+    (o['訂單編號']||'').toLowerCase().includes(q) ||
+    state.items.filter(it => it['訂單編號'] === o['訂單編號'])
+      .some(it => (it['車號']||'').toLowerCase().includes(q));
+
   // 分三類
   const active = state.orders
-    .filter(o => o['狀態'] === '進行中')
+    .filter(o => o['狀態'] === '進行中' && match(o))
     .sort((a, b) => {
       const da = a['交貨期限'] ? new Date(a['交貨期限']) : new Date('9999-12-31');
       const db = b['交貨期限'] ? new Date(b['交貨期限']) : new Date('9999-12-31');
@@ -225,12 +249,12 @@ function renderOrders() {
     .slice(0, 50);
 
   const done = state.orders
-    .filter(o => o['狀態'] === '完工交貨' && o['收款狀態'] !== '已收款')
+    .filter(o => o['狀態'] === '完工交貨' && o['收款狀態'] !== '已收款' && match(o))
     .sort((a, b) => new Date(b['完工日期'] || b['開單日期']) - new Date(a['完工日期'] || a['開單日期']))
     .slice(0, 50);
 
   const paid = state.orders
-    .filter(o => o['狀態'] === '完工交貨' && o['收款狀態'] === '已收款')
+    .filter(o => o['狀態'] === '完工交貨' && o['收款狀態'] === '已收款' && match(o))
     .sort((a, b) => new Date(b['完工日期'] || b['開單日期']) - new Date(a['完工日期'] || a['開單日期']))
     .slice(0, 50);
 
@@ -386,7 +410,7 @@ function renderOrderDetail() {
       </label>
     </div>
     <div id="photoGrid" class="grid grid-cols-3 gap-2">
-      ${renderPhotoGrid(o['完工照片'])}
+      ${renderPhotoGrid(o['完工照片'], orderNo)}
     </div>
     <div id="uploadProgress" class="hidden mt-2 text-xs text-amber-400 text-center">上傳中…</div>
   </div>
@@ -430,7 +454,12 @@ async function addItem(orderNo) {
 }
 
 async function deleteItem(id) {
-  if (!confirm('確定刪除此品項？')) return;
+  if (!document.getElementById('confirmDel_' + id)) {
+    const btn = document.querySelector(`[onclick="deleteItem('${id}')"]`);
+    if (btn) { btn.textContent = '確定刪除？'; btn.id = 'confirmDel_' + id; }
+    setTimeout(() => { if (btn) { btn.textContent = '🗑'; btn.removeAttribute('id'); } }, 3000);
+    return;
+  }
   const it = state.items.find(x => x['品項ID'] === id);
   const orderNo = it?.['訂單編號'];
   // 樂觀更新：先從本地移除
@@ -443,19 +472,23 @@ async function deleteItem(id) {
 async function cycleProgress(itemId, newProg) {
   const it = state.items.find(x => x['品項ID'] === itemId);
   if (!it) return;
+  const prev = it['進度'];
   it['進度'] = newProg;                          // 立刻更新本地
   showView('orderDetail', state.viewOrder);       // 立刻重繪
-  api('update', '品項', { key: itemId, data: { '進度': newProg } }); // 背景同步
+  const r = await api('update', '品項', { key: itemId, data: { '進度': newProg } });
+  if (r.error) { it['進度'] = prev; showView('orderDetail', state.viewOrder); showToast('更新失敗，已還原', 'error'); }
 }
 
 // 收款狀態變更（樂觀更新）
 async function updateOrderField(orderNo, field, value) {
   const o = state.orders.find(x => x['訂單編號'] === orderNo);
   if (!o) return;
+  const prev = o[field];
   o[field] = value;
   state.viewOrder = o;
   showView('orderDetail', o);
-  api('update', '訂單', { key: orderNo, data: { [field]: value } });
+  const r = await api('update', '訂單', { key: orderNo, data: { [field]: value } });
+  if (r.error) { o[field] = prev; showView('orderDetail', o); showToast('更新失敗，已還原', 'error'); return; }
   showToast('已更新');
 }
 
@@ -657,7 +690,7 @@ function startVoice() {
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
       voiceRecognition.stop();
-    }, 2000);
+    }, 3500);
   };
 
   voiceRecognition.onend = () => {
@@ -860,17 +893,15 @@ async function saveOrder() {
   }
 }
 
-async function updateOrderField(orderNo, field, value) {
-  const o = state.orders.find(x => x['訂單編號'] === orderNo);
-  if (!o) return;
-  o[field] = value;
-  state.viewOrder = o;
-  await api('update', '訂單', { key: orderNo, data: { [field]: value } });
-  showToast('已更新');
-}
 
 async function deleteOrder(orderNo) {
-  if (!confirm('確定刪除這張訂單及所有品項？')) return;
+  const btnId = 'confirmDelOrder';
+  if (!document.getElementById(btnId)) {
+    const btn = document.querySelector(`[onclick="deleteOrder('${orderNo}')"]`);
+    if (btn) { btn.textContent = '⚠ 確定刪除？再按一次確認'; btn.id = btnId; btn.classList.add('text-red-400'); }
+    setTimeout(() => { const b = document.getElementById(btnId); if (b) { b.textContent = '🗑️ 刪除訂單'; b.removeAttribute('id'); } }, 3000);
+    return;
+  }
   showLoading(true);
   await api('delete', '訂單', { key: orderNo });
   const its = state.items.filter(it => it['訂單編號'] === orderNo);
@@ -953,7 +984,13 @@ async function saveCustomer() {
 }
 
 async function deleteCustomer(name) {
-  if (!confirm(`確定刪除客戶「${name}」？`)) return;
+  const btnId = 'confirmDelCus';
+  if (!document.getElementById(btnId)) {
+    const btn = document.querySelector(`[onclick="deleteCustomer('${name}')"]`);
+    if (btn) { btn.textContent = '⚠ 確定刪除？再按一次'; btn.id = btnId; }
+    setTimeout(() => { const b = document.getElementById(btnId); if (b) { b.textContent = '刪除客戶'; b.removeAttribute('id'); } }, 3000);
+    return;
+  }
   showLoading(true);
   await api('delete', '客戶', { key: name });
   state.editCustomer = null;
@@ -1032,14 +1069,29 @@ function queryStats() {
 }
 
 // ── 完工照片 ────────────────────────────────
-function renderPhotoGrid(photoField) {
+function renderPhotoGrid(photoField, orderNo) {
   if (!photoField) return '<p class="text-gray-500 text-xs col-span-3">尚無照片</p>';
   const urls = String(photoField).split(',').filter(u => u.trim());
   if (!urls.length) return '<p class="text-gray-500 text-xs col-span-3">尚無照片</p>';
-  return urls.map(url => `
-    <a href="${url.trim()}" target="_blank">
-      <img src="${url.trim()}" class="w-full aspect-square object-cover rounded-lg border border-gray-600"/>
-    </a>`).join('');
+  return urls.map((url, idx) => `
+    <div class="relative">
+      <a href="${url.trim()}" target="_blank">
+        <img src="${url.trim()}" class="w-full aspect-square object-cover rounded-lg border border-gray-600"/>
+      </a>
+      <button onclick="deletePhoto('${orderNo}',${idx})"
+        class="absolute top-1 right-1 bg-red-600 text-white rounded-full w-6 h-6 text-xs flex items-center justify-center">✕</button>
+    </div>`).join('');
+}
+
+async function deletePhoto(orderNo, idx) {
+  const o = state.orders.find(x => x['訂單編號'] === orderNo);
+  if (!o) return;
+  const urls = String(o['完工照片'] || '').split(',').filter(u => u.trim());
+  urls.splice(idx, 1);
+  const newVal = urls.join(',');
+  o['完工照片'] = newVal;
+  document.getElementById('photoGrid').innerHTML = renderPhotoGrid(newVal, orderNo);
+  await api('update', '訂單', { key: orderNo, data: { '完工照片': newVal } });
 }
 
 async function uploadPhoto(orderNo, input) {
@@ -1063,7 +1115,7 @@ async function uploadPhoto(orderNo, input) {
     const existing = o['完工照片'] ? o['完工照片'] + ',' : '';
     o['完工照片'] = existing + result.url;
     state.viewOrder = o;
-    document.getElementById('photoGrid').innerHTML = renderPhotoGrid(o['完工照片']);
+    document.getElementById('photoGrid').innerHTML = renderPhotoGrid(o['完工照片'], o['訂單編號']);
   }
   showToast('照片已上傳 ✓');
 }

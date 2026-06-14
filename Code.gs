@@ -32,6 +32,11 @@ function handleRequest(e) {
     const body = e.postData ? JSON.parse(e.postData.contents) : {};
     const action = params.action || body.action;
     const sheet = params.sheet || body.sheet;
+    const secret = params.secret || body.secret;
+    const expected = PropertiesService.getScriptProperties().getProperty('API_SECRET');
+    if (expected && secret !== expected) {
+      return ContentService.createTextOutput(JSON.stringify({ error: 'Unauthorized' })).setMimeType(ContentService.MimeType.JSON);
+    }
 
     let result;
     switch (action) {
