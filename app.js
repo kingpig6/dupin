@@ -226,7 +226,7 @@ function renderOrders() {
       value="${state.search}"
       oninput="state.search=this.value;document.getElementById('orderListContent').innerHTML=renderOrdersContent()"
       class="w-full pl-9 pr-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500"/>
-    <span class="absolute left-3 top-2.5 text-gray-500 text-sm">🔍</span>
+    <span class="absolute left-3 top-2.5 text-gray-500 text-sm"></span>
   </div>
   <div id="orderListContent">${renderOrdersContent()}</div>`;
 }
@@ -342,7 +342,7 @@ function renderOrderDetail() {
         </div>
         <div class="flex flex-col items-end gap-2 ml-3">
           <span class="text-amber-400 font-bold">$${Number(it['金額']).toLocaleString()}</span>
-          <button onclick="deleteItem('${it['品項ID']}')" class="text-red-400 text-sm">🗑️</button>
+          <button onclick="deleteItem('${it['品項ID']}')" class="text-amber-400 text-sm">✕</button>
         </div>
       </div>
     </div>`;
@@ -371,7 +371,7 @@ function renderOrderDetail() {
         <option ${o['收款狀態']==='已收款'?'selected':''}>已收款</option>
       </select>
     </div>
-    ${o['完工日期'] ? `<div class="text-xs text-green-400 mb-1">✓ 完工日期：${o['完工日期']}</div>` : ''}
+    ${o['完工日期'] ? `<div class="text-xs text-amber-400 mb-1">完工日期：${o['完工日期']}</div>` : ''}
     ${o['備註'] ? `<div class="text-sm text-gray-400">備註：${o['備註']}</div>` : ''}
   </div>
 
@@ -404,7 +404,7 @@ function renderOrderDetail() {
     <div class="flex justify-between items-center mb-3">
       <span class="section-title">完工照片</span>
       <label class="btn btn-ghost text-sm cursor-pointer">
-        📷 上傳
+        上傳
         <input type="file" accept="image/*" capture="environment" class="hidden"
           onchange="uploadPhoto('${orderNo}', this)">
       </label>
@@ -416,11 +416,11 @@ function renderOrderDetail() {
   </div>
 
   <div class="grid grid-cols-2 gap-3 mt-4">
-    <button class="btn btn-primary" onclick="savePDF('${orderNo}','invoice')">📄 請款單 PDF</button>
-    <button class="btn btn-ghost"   onclick="savePDF('${orderNo}','work')">🔧 生產工單 PDF</button>
+    <button class="btn btn-primary" onclick="savePDF('${orderNo}','invoice')">請款單 PDF</button>
+    <button class="btn btn-ghost"   onclick="savePDF('${orderNo}','work')">生產工單 PDF</button>
   </div>
   <div class="mt-3">
-    <button class="btn btn-ghost w-full text-red-400" onclick="deleteOrder('${orderNo}')">🗑️ 刪除訂單</button>
+    <button class="btn btn-ghost w-full text-amber-400" onclick="deleteOrder('${orderNo}')">✕ 刪除訂單</button>
   </div>`;
 }
 
@@ -457,7 +457,7 @@ async function deleteItem(id) {
   if (!document.getElementById('confirmDel_' + id)) {
     const btn = document.querySelector(`[onclick="deleteItem('${id}')"]`);
     if (btn) { btn.textContent = '確定刪除？'; btn.id = 'confirmDel_' + id; }
-    setTimeout(() => { if (btn) { btn.textContent = '🗑'; btn.removeAttribute('id'); } }, 3000);
+    setTimeout(() => { if (btn) { btn.textContent = '✕'; btn.removeAttribute('id'); } }, 3000);
     return;
   }
   const it = state.items.find(x => x['品項ID'] === id);
@@ -534,14 +534,14 @@ function renderOrderForm() {
     ${isNew ? `
     <div class="card bg-gray-800 border border-gray-600">
       <div class="flex items-center justify-between mb-2">
-        <span class="section-title mb-0">🎙 語音開單</span>
+        <span class="section-title mb-0">語音開單</span>
         <span class="text-xs text-gray-400">Android Chrome 適用</span>
       </div>
       <p class="text-xs text-gray-400 mb-3">按下麥克風，說出品項資訊，自動填入表單</p>
       <div id="voiceResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
       <button type="button" id="voiceBtn" onclick="startVoice()"
         class="w-full py-3 rounded-lg font-bold text-white bg-blue-600 active:bg-blue-800 flex items-center justify-center gap-2">
-        <span id="voiceBtnIcon">🎙</span><span id="voiceBtnText">開始語音輸入</span>
+        <span id="voiceBtnIcon">●</span><span id="voiceBtnText">開始語音輸入</span>
       </button>
     </div>` : ''}
 
@@ -616,7 +616,7 @@ function renderItemRow(idx) {
     </div>
     <div class="flex justify-between items-center mt-1">
       <span class="text-xs text-gray-400">金額：<span id="r${idx}_amt" class="text-amber-400">$0</span></span>
-      ${idx > 0 ? `<button type="button" onclick="removeItemRow(${idx})" class="text-red-400 text-sm">移除</button>` : ''}
+      ${idx > 0 ? `<button type="button" onclick="removeItemRow(${idx})" class="text-amber-400 text-sm">移除</button>` : ''}
     </div>
   </div>`;
 }
@@ -675,8 +675,8 @@ function startVoice() {
   const result = document.getElementById('voiceResult');
 
   voiceActive = true;
-  btn.classList.replace('bg-blue-600', 'bg-red-600');
-  btnIcon.textContent = '⏹';
+  btn.classList.replace('bg-blue-600', 'bg-amber-600');
+  btnIcon.textContent = '■';
   btnText.textContent = '聆聽中… 說完請點停止';
 
   let silenceTimer = null;
@@ -717,8 +717,8 @@ function resetVoiceBtn() {
   const btnIcon = document.getElementById('voiceBtnIcon');
   const btnText = document.getElementById('voiceBtnText');
   if (!btn) return;
-  btn.classList.replace('bg-red-600', 'bg-blue-600');
-  btnIcon.textContent = '🎙';
+  btn.classList.replace('bg-amber-600', 'bg-blue-600');
+  btnIcon.textContent = '●';
   btnText.textContent = '再說一次';
 }
 
@@ -782,7 +782,7 @@ async function parseVoiceWithAI(text) {
 
   if (!res.success || !res.data) {
     const msg = res.error || 'unknown';
-    if (resultEl) resultEl.textContent = '⚠ AI 解析失敗：' + msg;
+    if (resultEl) resultEl.textContent = 'AI 解析失敗：' + msg;
     showToast('AI 失敗：' + msg);
     return;
   }
@@ -898,8 +898,8 @@ async function deleteOrder(orderNo) {
   const btnId = 'confirmDelOrder';
   if (!document.getElementById(btnId)) {
     const btn = document.querySelector(`[onclick="deleteOrder('${orderNo}')"]`);
-    if (btn) { btn.textContent = '⚠ 確定刪除？再按一次確認'; btn.id = btnId; btn.classList.add('text-red-400'); }
-    setTimeout(() => { const b = document.getElementById(btnId); if (b) { b.textContent = '🗑️ 刪除訂單'; b.removeAttribute('id'); } }, 3000);
+    if (btn) { btn.textContent = '確定刪除？再按一次確認'; btn.id = btnId; btn.classList.add('text-amber-500'); }
+    setTimeout(() => { const b = document.getElementById(btnId); if (b) { b.textContent = '✕ 刪除訂單'; b.removeAttribute('id'); } }, 3000);
     return;
   }
   showLoading(true);
@@ -987,7 +987,7 @@ async function deleteCustomer(name) {
   const btnId = 'confirmDelCus';
   if (!document.getElementById(btnId)) {
     const btn = document.querySelector(`[onclick="deleteCustomer('${name}')"]`);
-    if (btn) { btn.textContent = '⚠ 確定刪除？再按一次'; btn.id = btnId; }
+    if (btn) { btn.textContent = '確定刪除？再按一次'; btn.id = btnId; }
     setTimeout(() => { const b = document.getElementById(btnId); if (b) { b.textContent = '刪除客戶'; b.removeAttribute('id'); } }, 3000);
     return;
   }
@@ -1079,7 +1079,7 @@ function renderPhotoGrid(photoField, orderNo) {
         <img src="${url.trim()}" class="w-full aspect-square object-cover rounded-lg border border-gray-600"/>
       </a>
       <button onclick="deletePhoto('${orderNo}',${idx})"
-        class="absolute top-1 right-1 bg-red-600 text-white rounded-full w-6 h-6 text-xs flex items-center justify-center">✕</button>
+        class="absolute top-1 right-1 bg-gray-700 text-amber-400 rounded-full w-6 h-6 text-xs flex items-center justify-center leading-none">✕</button>
     </div>`).join('');
 }
 
