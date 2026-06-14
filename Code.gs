@@ -44,6 +44,7 @@ function handleRequest(e) {
       case 'generatePDF': result = generateInvoicePDF(body.orderNo, body.type); break;
       case 'getPDFUrl':   result = getPDFUrl(body.orderNo, body.type); break;
       case 'uploadPhoto': result = uploadPhoto(body.orderNo, body.base64, body.fileName); break;
+      case 'parseVoice':  result = parseVoiceWithAI(body.text, body.customers); break;
       default:          result = { error: 'Unknown action: ' + action };
     }
 
@@ -356,6 +357,62 @@ function uploadPhoto(orderNo, base64, fileName) {
   }
 
   return { success: true, url: imageUrl };
+}
+
+// ── Claude AI 語音解析 ───────────────────────
+function parseVoiceWithAI(text, customers) {
+  const key = PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY');
+  if (!key) return { error: '未設定 CLAUDE_API_KEY' };
+
+  const customerList = (customers || []).join('、') || '（無）';
+  const prompt = `你是一個訂單助手，請從以下語音辨識文字中萃取訂單品項資訊，回傳 JSON。
+
+現有客戶清單：${customerList}
+
+語音內容：「${text}」
+
+請回傳以下 JSON 格式（若無法辨識某欄位則留空字串）：
+{
+  "customer": "客戶名稱（從現有客戶清單中選，若無相符則填辨識到的名稱）",
+  "items": [
+    {
+      "name": "品名",
+      "spec": "規格",
+      "qty": 數量數字,
+      "price": 單價數字,
+      "plate": "車號",
+      "worker": "負責師傅"
+    }
+  ],
+  "note": "備註"
+}
+
+只回傳 JSON，不要其他說明文字。`;
+
+  const response = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post',
+    headers: {
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json'
+    },
+    payload: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }]
+    }),
+    muteHttpExceptions: true
+  });
+
+  const json = JSON.parse(response.getContentText());
+  if (json.error) return { error: json.error.message };
+
+  try {
+    const parsed = JSON.parse(json.content[0].text);
+    return { success: true, data: parsed };
+  } catch (e) {
+    return { error: 'AI 回傳格式錯誤：' + json.content[0].text };
+  }
 }
 
 // ── 設定：儲存 ──────────────────────────────

@@ -571,7 +571,8 @@ function startVoice() {
     const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
     result.textContent = '辨識：' + transcript;
     if (e.results[e.results.length - 1].isFinal) {
-      parseVoiceInput(transcript);
+      parseVoiceInput(transcript); // 規則解析（即時）
+      parseVoiceWithAI(transcript); // AI 解析（背景，更準確）
     }
   };
 
@@ -650,7 +651,64 @@ function parseVoiceInput(text) {
   const noteEl = document.getElementById('o_note');
   if (noteEl && !noteEl.value) noteEl.value = text;
 
-  showToast('語音已解析，請確認後送出');
+  showToast('語音已解析，AI 解析中…');
+}
+
+async function parseVoiceWithAI(text) {
+  const resultEl = document.getElementById('voiceResult');
+  if (resultEl) resultEl.textContent = '⏳ AI 解析中…';
+
+  const customerNames = state.customers.map(c => c['客戶名稱']);
+  const res = await api('parseVoice', null, { text, customers: customerNames });
+
+  if (!res.success || !res.data) {
+    if (resultEl) resultEl.textContent = '⚠ AI 解析失敗，已用基本辨識';
+    return;
+  }
+
+  const d = res.data;
+
+  // 填入客戶
+  if (d.customer) {
+    const cusEl = document.getElementById('o_cus');
+    if (cusEl) {
+      const opt = Array.from(cusEl.options).find(o => o.value === d.customer);
+      if (opt) cusEl.value = d.customer;
+    }
+  }
+
+  // 填入品項（清除舊列，重建）
+  if (d.items && d.items.length) {
+    // 補足品項列數
+    const container = document.getElementById('itemRows');
+    if (container) {
+      // 清空舊列
+      container.innerHTML = '';
+      itemRowCount = 0;
+      d.items.forEach((item, idx) => {
+        const div = document.createElement('div');
+        div.innerHTML = renderItemRow(idx);
+        container.appendChild(div.firstElementChild);
+        itemRowCount++;
+        if (item.name)   document.getElementById(`r${idx}_name`).value  = item.name;
+        if (item.spec)   document.getElementById(`r${idx}_spec`).value  = item.spec;
+        if (item.qty)    document.getElementById(`r${idx}_qty`).value   = item.qty;
+        if (item.price)  document.getElementById(`r${idx}_price`).value = item.price;
+        if (item.plate)  document.getElementById(`r${idx}_plate`).value = item.plate;
+        if (item.worker) document.getElementById(`r${idx}_worker`).value = item.worker;
+        calcRowAmount(idx);
+      });
+    }
+  }
+
+  // 備註
+  if (d.note) {
+    const noteEl = document.getElementById('o_note');
+    if (noteEl) noteEl.value = d.note;
+  }
+
+  if (resultEl) resultEl.textContent = '✓ AI 解析完成，請確認後送出';
+  showToast('AI 解析完成 ✓');
 }
 
 async function saveOrder() {
