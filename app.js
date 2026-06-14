@@ -265,14 +265,18 @@ function renderOrdersContent() {
   const orderCard = o => {
     const subtotal = orderSubtotal(o['訂單編號']);
     const deadline = o['交貨期限'] ? `· 交貨 ${o['交貨期限']}` : '';
-    // 品項摘要（最多顯示 3 項，超過顯示 +N）
+    // 品項摘要 + 進度 badge
     const its = state.items.filter(it => it['訂單編號'] === o['訂單編號']);
-    const itemNames = its.map(it => it['品名']).filter(Boolean);
-    const shown = itemNames.slice(0, 3).join('、');
-    const more = itemNames.length > 3 ? ` 等 ${itemNames.length} 項` : '';
-    const itemLine = itemNames.length
-      ? `<div class="text-sm text-gray-300 mb-1 truncate">${shown}${more}</div>`
-      : '';
+    const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-600', '完成': 'bg-green-600' };
+    const itemLine = its.length ? `
+      <div class="flex flex-wrap gap-1 mb-1">
+        ${its.slice(0, 4).map(it => `
+          <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-200">
+            ${it['品名'] || '-'}
+            <span class="w-1.5 h-1.5 rounded-full ${progColor[it['進度']] || 'bg-gray-500'}"></span>
+          </span>`).join('')}
+        ${its.length > 4 ? `<span class="text-xs text-gray-500">+${its.length - 4}</span>` : ''}
+      </div>` : '';
     return `
     <div class="card cursor-pointer" onclick="openOrder('${o['訂單編號']}')">
       <div class="flex justify-between items-start mb-0.5">
