@@ -196,7 +196,7 @@ function generateInvoicePDF(orderNo, type) {
   const subtotal = items.reduce((s, it) => s + (Number(it['數量']) * Number(it['單價'])), 0);
   const taxRate = Number(cfg['稅率'] || 0);
   const total = subtotal * (1 + taxRate);
-  const day = d.getDate();
+  const day = dateRef.getDate();
   const label = type === 'work' ? '生產工單' : '請款單';
 
   const extraHeaders = type === 'work' ? '<th>車號</th><th>負責師傅</th>' : '';
