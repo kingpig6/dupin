@@ -42,6 +42,7 @@ function handleRequest(e) {
       case 'getSettings': result = getSettings(); break;
       case 'saveSettings': result = saveSettings(body.data); break;
       case 'generatePDF': result = generateInvoicePDF(body.orderNo, body.type); break;
+      case 'getPDFUrl':   result = getPDFUrl(body.orderNo, body.type); break;
       default:          result = { error: 'Unknown action: ' + action };
     }
 
@@ -220,27 +221,47 @@ ${type === 'work' ? `
 </div>`}
 </body></html>`;
 
-  // 產生 PDF
+  // 產生 PDF blob
   const blob = Utilities.newBlob(html, MimeType.HTML, orderNo + '.html');
   const pdfBlob = blob.getAs(MimeType.PDF);
   const label = type === 'work' ? '生產工單' : '請款單';
   const fileName = `${label}_${orderNo}_${order['客戶']}.pdf`;
   pdfBlob.setName(fileName);
 
-  // 找或建立「獨品工坊」資料夾
-  let folder;
-  const folders = DriveApp.getFoldersByName('獨品工坊開單');
-  if (folders.hasNext()) {
-    folder = folders.next();
-  } else {
-    folder = DriveApp.createFolder('獨品工坊開單');
-  }
+  // 找或建立「獨品工坊開單」資料夾
+  const folder = getDriveFolder();
 
-  // 存檔
+  // 覆蓋：若已有同名檔案先刪除
+  const existing = folder.getFilesByName(fileName);
+  while (existing.hasNext()) existing.next().setTrashed(true);
+
+  // 存新檔
   const file = folder.createFile(pdfBlob);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
   return { success: true, url: file.getUrl(), name: fileName };
+}
+
+// ── 取得雲端硬碟中的 PDF 網址（沒有回傳 null）──
+function getPDFUrl(orderNo, type) {
+  const folder = getDriveFolder();
+  // 需要客戶名稱來組出檔名，先搜尋前綴
+  const label = type === 'work' ? '生產工單' : '請款單';
+  const prefix = `${label}_${orderNo}_`;
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const f = files.next();
+    if (f.getName().startsWith(prefix)) {
+      return { url: f.getUrl(), name: f.getName() };
+    }
+  }
+  return { url: null };
+}
+
+// ── 取得或建立資料夾 ────────────────────────
+function getDriveFolder() {
+  const folders = DriveApp.getFoldersByName('獨品工坊開單');
+  return folders.hasNext() ? folders.next() : DriveApp.createFolder('獨品工坊開單');
 }
 
 // ── 設定：儲存 ──────────────────────────────

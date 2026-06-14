@@ -401,16 +401,23 @@ async function saveOrder() {
   if (!data['訂單編號']) { showToast('請填訂單編號'); return; }
   if (!data['客戶'])     { showToast('請選擇客戶'); return; }
 
+  const isNew = !state.editOrder;
+  const orderNo = data['訂單編號'];
   showLoading(true);
   if (state.editOrder) {
-    await api('update', '訂單', { key: data['訂單編號'], data });
+    await api('update', '訂單', { key: orderNo, data });
   } else {
     await api('add', '訂單', { data });
   }
   state.editOrder = null;
   await loadAll();
   showView('orders');
-  showToast(state.editOrder ? '已更新' : '訂單已建立 ✓');
+  showToast('訂單已建立，正在產生請款單 PDF…');
+  // 新訂單自動產生請款單 PDF（背景執行，不等結果）
+  if (isNew) {
+    api('generatePDF', null, { orderNo, type: 'invoice' })
+      .then(r => { if (r.success) showToast('請款單 PDF 已存到雲端 ✓'); });
+  }
 }
 
 async function updateOrderField(orderNo, field, value) {
@@ -584,18 +591,28 @@ function queryStats() {
     </div>`;
 }
 
-// ── PDF 存到 Google 雲端硬碟 ────────────────
+// ── PDF 開啟或產生 ───────────────────────────
 async function savePDF(orderNo, type) {
   const label = type === 'work' ? '生產工單' : '請款單';
+  showToast(`正在查詢 ${label} PDF…`);
+
+  // 先查雲端是否已有檔案
+  const found = await api('getPDFUrl', null, { orderNo, type });
+  if (found.url) {
+    window.open(found.url, '_blank');
+    showToast(`已開啟雲端 ${label} ✓`);
+    return;
+  }
+
+  // 沒有才產生
   showToast(`正在產生 ${label} PDF…`);
   const result = await api('generatePDF', null, { orderNo, type });
   if (result.error) {
     showToast('產生失敗：' + result.error, 'error');
     return;
   }
-  // 開啟雲端硬碟檔案
   window.open(result.url, '_blank');
-  showToast(`${label} 已存到雲端硬碟 ✓`);
+  showToast(`${label} 已存到雲端並開啟 ✓`);
 }
 
 // ── 請款單預覽（保留列印用）────────────────
