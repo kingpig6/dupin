@@ -456,7 +456,7 @@ async function addItem(orderNo) {
 }
 
 function editItem(id) {
-  const it = state.items.find(x => x['品項ID'] === id);
+  const it = state.items.find(x => String(x['品項ID']) === String(id));
   if (!it) return;
   const card = document.getElementById(`itemCard_${id}`);
   if (!card) return;
@@ -493,7 +493,7 @@ function editItem(id) {
 }
 
 async function saveItem(id) {
-  const it = state.items.find(x => x['品項ID'] === id);
+  const it = state.items.find(x => String(x['品項ID']) === String(id));
   if (!it) return;
   const qty   = Number(document.getElementById('ei_qty').value)   || 1;
   const price = Number(document.getElementById('ei_price').value) || 0;
@@ -520,7 +520,7 @@ async function deleteItem(id) {
     setTimeout(() => { if (btn) { btn.textContent = '✕'; btn.removeAttribute('id'); } }, 3000);
     return;
   }
-  const it = state.items.find(x => x['品項ID'] === id);
+  const it = state.items.find(x => String(x['品項ID']) === String(id));
   const orderNo = it?.['訂單編號'];
   // 樂觀更新：先從本地移除
   state.items = state.items.filter(x => x['品項ID'] !== id);
@@ -530,7 +530,7 @@ async function deleteItem(id) {
 
 // 品項進度更新（樂觀更新：畫面先動，背景同步）
 async function cycleProgress(itemId, newProg) {
-  const it = state.items.find(x => x['品項ID'] === itemId);
+  const it = state.items.find(x => String(x['品項ID']) === String(itemId));
   if (!it) return;
   const prev = it['進度'];
   it['進度'] = newProg;                          // 立刻更新本地
@@ -1153,7 +1153,7 @@ async function uploadItemPhoto(itemId, orderNo, input) {
   if (prog) prog.classList.add('hidden');
   input.value = '';
   if (result.error) { showToast('上傳失敗：' + result.error, 'error'); return; }
-  const it = state.items.find(x => x['品項ID'] === itemId);
+  const it = state.items.find(x => String(x['品項ID']) === String(itemId));
   if (it) {
     it['完工照片'] = (it['完工照片'] ? it['完工照片'] + ',' : '') + result.url;
     const grid = document.getElementById(`itemPhotoGrid_${itemId}`);
@@ -1163,7 +1163,7 @@ async function uploadItemPhoto(itemId, orderNo, input) {
 }
 
 async function deleteItemPhoto(itemId, idx) {
-  const it = state.items.find(x => x['品項ID'] === itemId);
+  const it = state.items.find(x => String(x['品項ID']) === String(itemId));
   if (!it) return;
   const urls = String(it['完工照片'] || '').split(',').filter(u => u.trim());
   urls.splice(idx, 1);
