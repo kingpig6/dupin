@@ -29,6 +29,8 @@ async function api(action, sheet, extra = {}) {
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain' }, // 避免 CORS preflight
       body: JSON.stringify(payload),
     });
     return await res.json();
