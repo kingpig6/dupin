@@ -338,7 +338,7 @@ function uploadPhoto(orderNo, base64, fileName) {
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
   // 取得直接顯示用的圖片網址
-  const imageUrl = `https://drive.google.com/uc?id=${file.getId()}`;
+  const imageUrl = `https://drive.google.com/thumbnail?id=${file.getId()}&sz=w400`;
 
   // 更新訂單的「完工照片」欄位（附加）
   const sheet = ss.getSheetByName('訂單');
