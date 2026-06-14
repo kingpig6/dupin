@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#f59e0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>獨品工坊開單系統</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#111827; color:#f3f4f6; font-family:'Noto Sans TC',sans-serif; }
+  .tab-active { border-bottom:2px solid #f59e0b; color:#f59e0b; }
+  .badge-進行中 { background:#1d4ed8; }
+  .badge-完工交貨 { background:#15803d; }
+  .badge-未收款 { background:#b91c1c; }
+  .badge-收款訂金 { background:#92400e; }
+  .badge-已收款 { background:#166534; }
+  input,select,textarea {
+    background:#1f2937; border:1px solid #374151; color:#f3f4f6;
+    border-radius:6px; padding:8px 12px; width:100%;
+  }
+  input:focus,select:focus,textarea:focus {
+    outline:none; border-color:#f59e0b;
+  }
+  .btn { padding:10px 20px; border-radius:8px; font-weight:600; cursor:pointer; border:none; }
+  .btn-primary { background:#f59e0b; color:#111827; }
+  .btn-danger  { background:#dc2626; color:#fff; }
+  .btn-ghost   { background:#374151; color:#f3f4f6; }
+  .card { background:#1f2937; border-radius:12px; padding:16px; margin-bottom:12px; }
+  .section-title { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+  @media print {
+    body { background:#fff; color:#000; }
+    .no-print { display:none !important; }
+    .print-area { display:block !important; }
+  }
+  .print-area { display:none; }
+</style>
+</head>
+<body>
+
+<!-- ===== 頂部導覽 ===== -->
+<header class="no-print sticky top-0 z-50 bg-gray-900 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-2">
+    <button id="backBtn" onclick="goBack()" class="text-amber-400 text-xl hidden">←</button>
+    <h1 id="pageTitle" class="text-amber-400 font-bold text-lg">獨品工坊</h1>
+  </div>
+  <div id="headerActions"></div>
+</header>
+
+<!-- ===== 主內容 ===== -->
+<main id="app" class="no-print pb-20 px-4 pt-4 max-w-lg mx-auto"></main>
+
+<!-- ===== 底部導覽 ===== -->
+<nav class="no-print fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-700 flex">
+  <button onclick="showView('orders')"    class="nav-btn flex-1 py-3 text-center text-xs" data-view="orders">
+    <div class="text-lg">📋</div>訂單
+  </button>
+  <button onclick="showView('newOrder')"  class="nav-btn flex-1 py-3 text-center text-xs" data-view="newOrder">
+    <div class="text-2xl font-bold text-amber-400">＋</div>開單
+  </button>
+  <button onclick="showView('customers')" class="nav-btn flex-1 py-3 text-center text-xs" data-view="customers">
+    <div class="text-lg">👥</div>客戶
+  </button>
+  <button onclick="showView('stats')"     class="nav-btn flex-1 py-3 text-center text-xs" data-view="stats">
+    <div class="text-lg">📊</div>業績
+  </button>
+</nav>
+
+<!-- ===== 請款單列印區 ===== -->
+<div class="print-area" id="invoicePrint"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
