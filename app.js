@@ -667,10 +667,11 @@ function renderItemRow(idx) {
       <input placeholder="數量" type="number" value="1" id="r${idx}_qty" oninput="calcRowAmount(${idx})"/>
       <input placeholder="單價" type="number" id="r${idx}_price" oninput="calcRowAmount(${idx})"/>
     </div>
-    <div class="grid grid-cols-2 gap-2 mb-1">
+    <div class="grid grid-cols-2 gap-2 mb-2">
       <input placeholder="車號（選填）" id="r${idx}_plate"/>
       <input placeholder="負責師傅（選填）" id="r${idx}_worker"/>
     </div>
+    <textarea placeholder="備註（選填）" rows="2" id="r${idx}_note" class="w-full mb-1"></textarea>
     <div class="flex justify-between items-center mt-1">
       <span class="text-xs text-gray-400">金額：<span id="r${idx}_amt" class="text-amber-400">$0</span></span>
       ${idx > 0 ? `<button type="button" onclick="removeItemRow(${idx})" class="text-amber-400 text-sm">移除</button>` : ''}
@@ -874,6 +875,7 @@ async function parseVoiceWithAI(text) {
         if (item.price)  document.getElementById(`r${idx}_price`).value = item.price;
         if (item.plate)  document.getElementById(`r${idx}_plate`).value = item.plate;
         if (item.worker) document.getElementById(`r${idx}_worker`).value = item.worker;
+        if (item.note)   document.getElementById(`r${idx}_note`).value = item.note;
         calcRowAmount(idx);
       });
     }
@@ -929,6 +931,7 @@ async function saveOrder() {
         '金額':     qty * price,
         '車號':     document.getElementById(`r${idx}_plate`)?.value.trim() || '',
         '負責師傅': document.getElementById(`r${idx}_worker`)?.value.trim() || '',
+        '備註':     document.getElementById(`r${idx}_note`)?.value.trim() || '',
       };
       await api('add', '品項', { data: item });
     }
