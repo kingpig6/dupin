@@ -217,17 +217,30 @@ function renderOrderDetail() {
   const its = state.items.filter(it => it['訂單編號'] === orderNo);
   const subtotal = its.reduce((s, it) => s + Number(it['金額']), 0);
 
-  const itemRows = its.map(it => `
-    <div class="card flex justify-between items-center">
-      <div>
-        <div class="font-semibold">${it['品名']}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
-        <div class="text-xs text-gray-400">${it['數量']} × $${Number(it['單價']).toLocaleString()}${it['車號'] ? ' · ' + it['車號'] : ''}</div>
+  const progressColors = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-600', '完成': 'bg-green-600' };
+  const progressNext   = { '待施工': '施工中', '施工中': '完成', '完成': '待施工' };
+
+  const itemRows = its.map(it => {
+    const prog = it['進度'] || '待施工';
+    const color = progressColors[prog] || 'bg-gray-600';
+    return `
+    <div class="card">
+      <div class="flex justify-between items-start">
+        <div class="flex-1">
+          <div class="font-semibold">${it['品名']}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
+          <div class="text-xs text-gray-400 mb-2">${it['數量']} × $${Number(it['單價']).toLocaleString()}${it['車號'] ? ' · ' + it['車號'] : ''}</div>
+          <button onclick="cycleProgress('${it['品項ID']}','${progressNext[prog]}')"
+            class="${color} text-white text-xs px-3 py-1 rounded-full font-semibold">
+            ${prog}
+          </button>
+        </div>
+        <div class="flex flex-col items-end gap-2 ml-3">
+          <span class="text-amber-400 font-bold">$${Number(it['金額']).toLocaleString()}</span>
+          <button onclick="deleteItem('${it['品項ID']}')" class="text-red-400 text-sm">🗑️</button>
+        </div>
       </div>
-      <div class="flex items-center gap-3">
-        <span class="text-amber-400 font-bold">$${Number(it['金額']).toLocaleString()}</span>
-        <button onclick="deleteItem('${it['品項ID']}')" class="text-red-400 text-lg">✕</button>
-      </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   return `
   <div class="card mb-4">
@@ -242,7 +255,7 @@ function renderOrderDetail() {
       </div>
     </div>
     <div class="flex gap-2 mb-3">
-      <select onchange="updateOrderField('${orderNo}','狀態',this.value)" class="flex-1 text-sm">
+      <select onchange="updateOrderStatus('${orderNo}',this.value)" class="flex-1 text-sm">
         <option ${o['狀態']==='進行中'?'selected':''}>進行中</option>
         <option ${o['狀態']==='完工交貨'?'selected':''}>完工交貨</option>
       </select>
@@ -252,6 +265,7 @@ function renderOrderDetail() {
         <option ${o['收款狀態']==='已收款'?'selected':''}>已收款</option>
       </select>
     </div>
+    ${o['完工日期'] ? `<div class="text-xs text-green-400 mb-1">✓ 完工日期：${o['完工日期']}</div>` : ''}
     ${o['備註'] ? `<div class="text-sm text-gray-400">備註：${o['備註']}</div>` : ''}
   </div>
 
@@ -323,6 +337,39 @@ async function deleteItem(id) {
   await api('delete', '品項', { key: id });
   await loadAll();
   showView('orderDetail', state.orders.find(o => o['訂單編號'] === orderNo));
+}
+
+// 品項進度切換
+async function cycleProgress(itemId, nextProg) {
+  const it = state.items.find(x => x['品項ID'] === itemId);
+  if (!it) return;
+  await api('update', '品項', { key: itemId, data: { '進度': nextProg } });
+  await loadAll();
+  showView('orderDetail', state.orders.find(o => o['訂單編號'] === it['訂單編號']));
+}
+
+// 狀態變更（完工時自動記錄完工日期並產生請款單）
+async function updateOrderStatus(orderNo, newStatus) {
+  const o = state.orders.find(x => x['訂單編號'] === orderNo);
+  if (!o) return;
+  const data = { '狀態': newStatus };
+  if (newStatus === '完工交貨') {
+    data['完工日期'] = new Date().toISOString().slice(0, 10);
+  }
+  o['狀態'] = newStatus;
+  if (data['完工日期']) o['完工日期'] = data['完工日期'];
+  state.viewOrder = o;
+  await api('update', '訂單', { key: orderNo, data });
+  // 完工時自動更新請款單 PDF（背景）
+  if (newStatus === '完工交貨') {
+    showToast('完工！正在更新請款單 PDF…');
+    api('generatePDF', null, { orderNo, type: 'invoice' })
+      .then(r => { if (r.success) showToast('請款單 PDF 已更新 ✓'); });
+  } else {
+    showToast('狀態已更新');
+  }
+  await loadAll();
+  showView('orderDetail', state.orders.find(x => x['訂單編號'] === orderNo));
 }
 
 // ── 訂單表單（新增/編輯）───────────────────

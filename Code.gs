@@ -138,29 +138,34 @@ function generateInvoicePDF(orderNo, type) {
   }
   if (!order) return { error: '找不到訂單：' + orderNo };
 
-  const d = new Date(order['開單日期']);
-  const roc = d.getFullYear() - 1911;
-  const month = d.getMonth() + 1;
-  const yyyymm = `${d.getFullYear()}${String(month).padStart(2,'0')}`;
   const customer = order['客戶'] || '';
   const cfg = getSettings().data;
+
+  // 請款單以「完工日期月份」為基準；生產工單以開單日期顯示
+  const dateRef = (type === 'invoice' && order['完工日期'])
+    ? new Date(order['完工日期'])
+    : new Date(order['開單日期']);
+  const roc   = dateRef.getFullYear() - 1911;
+  const month = dateRef.getMonth() + 1;
+  const yyyymm = `${dateRef.getFullYear()}${String(month).padStart(2,'0')}`;
 
   let items = [];
   let fileName = '';
 
   if (type === 'invoice') {
-    // ── 請款單：合併同月同客戶所有訂單的品項 ──
+    // ── 請款單：合併同月同客戶「完工交貨」訂單品項 ──
     const allOrderRows = orderSheet.getDataRange().getValues();
     const allOrderHeaders = allOrderRows[0];
     const sameMonthOrders = [];
     for (let i = 1; i < allOrderRows.length; i++) {
       const o2 = {};
       allOrderHeaders.forEach((h, ci) => { o2[h] = allOrderRows[i][ci]; });
-      const od = new Date(o2['開單日期']);
-      const oym = `${od.getFullYear()}${String(od.getMonth()+1).padStart(2,'0')}`;
-      if (oym === yyyymm && o2['客戶'] === customer) {
-        sameMonthOrders.push(o2['訂單編號']);
-      }
+      if (o2['狀態'] !== '完工交貨') continue;       // 未完工不列入
+      if (o2['客戶'] !== customer) continue;
+      // 以完工日期月份判斷
+      const dRef2 = o2['完工日期'] ? new Date(o2['完工日期']) : new Date(o2['開單日期']);
+      const oym = `${dRef2.getFullYear()}${String(dRef2.getMonth()+1).padStart(2,'0')}`;
+      if (oym === yyyymm) sameMonthOrders.push(String(o2['訂單編號']));
     }
     const itemSheet = ss.getSheetByName('品項');
     const itemRows = itemSheet.getDataRange().getValues();
@@ -272,7 +277,8 @@ function getPDFUrl(orderNo, type) {
     const headers = rows[0];
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === String(orderNo)) {
-        const d = new Date(rows[i][headers.indexOf('開單日期')]);
+        const completedDate = rows[i][headers.indexOf('完工日期')];
+        const d = completedDate ? new Date(completedDate) : new Date(rows[i][headers.indexOf('開單日期')]);
         const yyyymm = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}`;
         const customer = rows[i][headers.indexOf('客戶')];
         prefix = `請款單_${yyyymm}_${customer}`;
