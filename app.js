@@ -345,7 +345,7 @@ function renderOrderDetail() {
     const prog = it['進度'] || '待施工';
     const color = progressColors[prog] || 'bg-gray-600';
     return `
-    <div class="card">
+    <div class="card" id="itemCard_${it['品項ID']}">
       <div class="flex justify-between items-start">
         <div class="flex-1">
           <div class="font-semibold">${it['品名']}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
@@ -458,8 +458,7 @@ async function addItem(orderNo) {
 function editItem(id) {
   const it = state.items.find(x => x['品項ID'] === id);
   if (!it) return;
-  // 在卡片原地展開編輯介面
-  const card = document.querySelector(`[onclick="editItem('${id}')"]`)?.closest('.card');
+  const card = document.getElementById(`itemCard_${id}`);
   if (!card) return;
   card.innerHTML = `
     <div class="grid grid-cols-2 gap-2 mb-2">
@@ -515,8 +514,9 @@ async function saveItem(id) {
 
 async function deleteItem(id) {
   if (!document.getElementById('confirmDel_' + id)) {
-    const btn = document.querySelector(`[onclick="deleteItem('${id}')"]`);
-    if (btn) { btn.textContent = '確定刪除？'; btn.id = 'confirmDel_' + id; }
+    const card = document.getElementById(`itemCard_${id}`);
+    const btn = card ? card.querySelector('[onclick*="deleteItem"]') : null;
+    if (btn) { btn.textContent = '確定？'; btn.id = 'confirmDel_' + id; }
     setTimeout(() => { if (btn) { btn.textContent = '✕'; btn.removeAttribute('id'); } }, 3000);
     return;
   }
