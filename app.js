@@ -229,10 +229,12 @@ function renderOrderDetail() {
         <div class="flex-1">
           <div class="font-semibold">${it['品名']}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
           <div class="text-xs text-gray-400 mb-2">${it['數量']} × $${Number(it['單價']).toLocaleString()}${it['車號'] ? ' · ' + it['車號'] : ''}</div>
-          <button onclick="cycleProgress('${it['品項ID']}','${progressNext[prog]}')"
-            class="${color} text-white text-xs px-3 py-1 rounded-full font-semibold">
-            ${prog}
-          </button>
+          <select onchange="cycleProgress('${it['品項ID']}',this.value)"
+            class="${color} text-white text-xs px-2 py-1 rounded-full font-semibold border-0 outline-none cursor-pointer">
+            <option value="待施工" ${prog==='待施工'?'selected':''}>待施工</option>
+            <option value="施工中" ${prog==='施工中'?'selected':''}>施工中</option>
+            <option value="完成"   ${prog==='完成'?'selected':''}>完成</option>
+          </select>
         </div>
         <div class="flex flex-col items-end gap-2 ml-3">
           <span class="text-amber-400 font-bold">$${Number(it['金額']).toLocaleString()}</span>
@@ -339,11 +341,11 @@ async function deleteItem(id) {
   showView('orderDetail', state.orders.find(o => o['訂單編號'] === orderNo));
 }
 
-// 品項進度切換
-async function cycleProgress(itemId, nextProg) {
+// 品項進度更新
+async function cycleProgress(itemId, newProg) {
   const it = state.items.find(x => x['品項ID'] === itemId);
   if (!it) return;
-  await api('update', '品項', { key: itemId, data: { '進度': nextProg } });
+  await api('update', '品項', { key: itemId, data: { '進度': newProg } });
   await loadAll();
   showView('orderDetail', state.orders.find(o => o['訂單編號'] === it['訂單編號']));
 }
