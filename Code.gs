@@ -240,24 +240,33 @@ ${type==='work'?`
 </div>`}
 </body></html>`;
 
-  // 產生 PDF，覆蓋同名舊檔
+  // 產生 PDF，存入對應子資料夾，覆蓋舊檔
   const blob = Utilities.newBlob(html, MimeType.HTML, fileName + '.html');
   const pdfBlob = blob.getAs(MimeType.PDF);
   pdfBlob.setName(fileName);
-  const folder = getDriveFolder();
-  const existing = folder.getFilesByName(fileName);
-  while (existing.hasNext()) existing.next().setTrashed(true);
-  const file = folder.createFile(pdfBlob);
+  const subFolder = getSubFolder(type);
+
+  // 刪除同前綴的所有舊檔（避免重複）
+  const prefix = type === 'invoice'
+    ? fileName.replace('.pdf', '')   // 請款單_YYYYMM_客戶
+    : `生產工單_${orderNo}_`;        // 生產工單_訂單編號_
+  const existingFiles = subFolder.getFiles();
+  while (existingFiles.hasNext()) {
+    const f = existingFiles.next();
+    if (f.getName().startsWith(prefix)) f.setTrashed(true);
+  }
+
+  const file = subFolder.createFile(pdfBlob);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   return { success: true, url: file.getUrl(), name: fileName };
 }
 
 // ── 取得雲端 PDF 網址（沒有回傳 null）────────
 function getPDFUrl(orderNo, type) {
-  const folder = getDriveFolder();
+  const subFolder = getSubFolder(type);
   let prefix = '';
+
   if (type === 'invoice') {
-    // 請款單用月份+客戶命名，需先找出客戶與月份
     const orderSheet = ss.getSheetByName('訂單');
     const rows = orderSheet.getDataRange().getValues();
     const headers = rows[0];
@@ -273,8 +282,10 @@ function getPDFUrl(orderNo, type) {
   } else {
     prefix = `生產工單_${orderNo}_`;
   }
+
   if (!prefix) return { url: null };
-  const files = folder.getFiles();
+
+  const files = subFolder.getFiles();
   while (files.hasNext()) {
     const f = files.next();
     if (f.getName().startsWith(prefix)) {
@@ -284,10 +295,18 @@ function getPDFUrl(orderNo, type) {
   return { url: null };
 }
 
-// ── 取得或建立資料夾 ────────────────────────
-function getDriveFolder() {
+// ── 取得根資料夾 ────────────────────────────
+function getRootFolder() {
   const folders = DriveApp.getFoldersByName('獨品工坊開單');
   return folders.hasNext() ? folders.next() : DriveApp.createFolder('獨品工坊開單');
+}
+
+// ── 取得或建立子資料夾 ───────────────────────
+function getSubFolder(type) {
+  const root = getRootFolder();
+  const subName = type === 'invoice' ? '請款單' : '生產工單';
+  const subs = root.getFoldersByName(subName);
+  return subs.hasNext() ? subs.next() : root.createFolder(subName);
 }
 
 // ── 設定：儲存 ──────────────────────────────
