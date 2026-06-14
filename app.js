@@ -167,8 +167,9 @@ function render() {
 
 // ── 訂單列表 ────────────────────────────────
 function renderOrders() {
-  const active = state.orders.filter(o => o['狀態'] === '進行中');
-  const done   = state.orders.filter(o => o['狀態'] === '完工交貨');
+  const visible = state.orders.filter(o => !(o['狀態'] === '完工交貨' && o['收款狀態'] === '已收款'));
+  const active = visible.filter(o => o['狀態'] === '進行中');
+  const done   = visible.filter(o => o['狀態'] === '完工交貨');
 
   const orderCard = o => {
     const subtotal = orderSubtotal(o['訂單編號']);
