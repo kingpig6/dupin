@@ -1,5 +1,5 @@
-const CACHE = 'dupin-v1';
-const ASSETS = ['/', '/index.html', '/app.js', '/manifest.json'];
+const CACHE = 'dupin-v2';
+const ASSETS = ['/dupin/', '/dupin/index.html', '/dupin/app.js', '/dupin/manifest.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
