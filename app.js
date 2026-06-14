@@ -418,6 +418,21 @@ function renderOrderForm() {
 
   return `
   <div class="flex flex-col gap-3">
+
+    ${isNew ? `
+    <div class="card bg-gray-800 border border-gray-600">
+      <div class="flex items-center justify-between mb-2">
+        <span class="section-title mb-0">🎙 語音開單</span>
+        <span class="text-xs text-gray-400">Android Chrome 適用</span>
+      </div>
+      <p class="text-xs text-gray-400 mb-3">按下麥克風，說出品項資訊，自動填入表單</p>
+      <div id="voiceResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
+      <button type="button" id="voiceBtn" onclick="startVoice()"
+        class="w-full py-3 rounded-lg font-bold text-white bg-blue-600 active:bg-blue-800 flex items-center justify-center gap-2">
+        <span id="voiceBtnIcon">🎙</span><span id="voiceBtnText">開始語音輸入</span>
+      </button>
+    </div>` : ''}
+
     <div>
       <label class="section-title">訂單編號</label>
       <input id="o_no" value="${o['訂單編號'] || newNo}" ${state.editOrder ? 'readonly' : ''}/>
@@ -519,6 +534,123 @@ function generateOrderNo() {
   const same = state.orders.filter(o => o['訂單編號'].startsWith(today));
   const seq = String(same.length + 1).padStart(2, '0');
   return `${today}-${seq}`;
+}
+
+// ── 語音開單 ────────────────────────────────
+let voiceRecognition = null;
+let voiceActive = false;
+
+function startVoice() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showToast('你的瀏覽器不支援語音辨識，請用 Android Chrome');
+    return;
+  }
+
+  if (voiceActive) {
+    voiceRecognition?.stop();
+    return;
+  }
+
+  voiceRecognition = new SpeechRecognition();
+  voiceRecognition.lang = 'zh-TW';
+  voiceRecognition.interimResults = true;
+  voiceRecognition.continuous = false;
+
+  const btn = document.getElementById('voiceBtn');
+  const btnIcon = document.getElementById('voiceBtnIcon');
+  const btnText = document.getElementById('voiceBtnText');
+  const result = document.getElementById('voiceResult');
+
+  voiceActive = true;
+  btn.classList.replace('bg-blue-600', 'bg-red-600');
+  btnIcon.textContent = '⏹';
+  btnText.textContent = '聆聽中… 點擊停止';
+
+  voiceRecognition.onresult = e => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+    result.textContent = '辨識：' + transcript;
+    if (e.results[e.results.length - 1].isFinal) {
+      parseVoiceInput(transcript);
+    }
+  };
+
+  voiceRecognition.onerror = e => {
+    showToast('語音錯誤：' + e.error);
+    resetVoiceBtn();
+  };
+
+  voiceRecognition.onend = () => {
+    resetVoiceBtn();
+  };
+
+  voiceRecognition.start();
+}
+
+function resetVoiceBtn() {
+  voiceActive = false;
+  const btn = document.getElementById('voiceBtn');
+  const btnIcon = document.getElementById('voiceBtnIcon');
+  const btnText = document.getElementById('voiceBtnText');
+  if (!btn) return;
+  btn.classList.replace('bg-red-600', 'bg-blue-600');
+  btnIcon.textContent = '🎙';
+  btnText.textContent = '再說一次';
+}
+
+function parseVoiceInput(text) {
+  // 解析數字（中文數字 → 阿拉伯數字）
+  const toNum = s => {
+    const map = { 零:0,一:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,百:100,千:1000,萬:10000 };
+    let n = parseInt(s.replace(/,/g, ''));
+    if (!isNaN(n)) return n;
+    // 簡易中文數字轉換
+    let result = 0, tmp = 0;
+    for (const c of s) {
+      if (map[c] >= 10) { result += (tmp || 1) * map[c]; tmp = 0; }
+      else if (map[c] !== undefined) tmp = map[c];
+    }
+    return result + tmp || null;
+  };
+
+  // 嘗試填入第一個品項列
+  const row = 0;
+
+  // 品名：取「彩繪/烤漆/改裝」等關鍵詞前後
+  const nameMatch = text.match(/(.{2,10}?)(彩繪|烤漆|改裝|設計|噴漆|貼膜|拋光|鍍膜|車殼|油箱|車架)/);
+  if (nameMatch) {
+    const nameEl = document.getElementById(`r${row}_name`);
+    if (nameEl) nameEl.value = nameMatch[1] + nameMatch[2];
+  }
+
+  // 數量：X個/X件/X台
+  const qtyMatch = text.match(/(\d+|[零一二三四五六七八九十百千萬]+)\s*[個件台組套]/);
+  if (qtyMatch) {
+    const qty = toNum(qtyMatch[1]);
+    const qtyEl = document.getElementById(`r${row}_qty`);
+    if (qtyEl && qty) { qtyEl.value = qty; calcRowAmount(row); }
+  }
+
+  // 單價：X萬/X千/X百 或 $X 或 X元
+  const priceMatch = text.match(/(?:單價|每[個件台])?[＄$]?(\d[\d,]*|\d+[萬千百]?\d*)\s*[元塊錢萬千]/);
+  if (priceMatch) {
+    const price = toNum(priceMatch[1].replace(/萬/, '0000').replace(/千/, '000').replace(/百/, '00'));
+    const priceEl = document.getElementById(`r${row}_price`);
+    if (priceEl && price) { priceEl.value = price; calcRowAmount(row); }
+  }
+
+  // 車號：2-4碼英文+數字組合
+  const plateMatch = text.match(/[A-Z]{1,3}[-\s]?\d{3,4}|\d{3,4}[-\s]?[A-Z]{1,3}/i);
+  if (plateMatch) {
+    const plateEl = document.getElementById(`r${row}_plate`);
+    if (plateEl) plateEl.value = plateMatch[0].toUpperCase();
+  }
+
+  // 備註欄填入完整辨識文字供參考
+  const noteEl = document.getElementById('o_note');
+  if (noteEl && !noteEl.value) noteEl.value = text;
+
+  showToast('語音已解析，請確認後送出');
 }
 
 async function saveOrder() {
