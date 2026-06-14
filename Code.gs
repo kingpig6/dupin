@@ -371,9 +371,12 @@ function parseVoiceWithAI(text, customers) {
 
 語音內容：「${text}」
 
+今天日期：${new Date().toISOString().slice(0,10)}
+
 請回傳以下 JSON 格式（若無法辨識某欄位則留空字串）：
 {
   "customer": "客戶名稱（從現有客戶清單中選，若無相符則填辨識到的名稱）",
+  "deadline": "交貨期限（YYYY-MM-DD 格式，如說下週五/月底/六月底請依今天日期推算）",
   "items": [
     {
       "name": "品名",
@@ -404,14 +407,18 @@ function parseVoiceWithAI(text, customers) {
     muteHttpExceptions: true
   });
 
-  const json = JSON.parse(response.getContentText());
-  if (json.error) return { error: json.error.message };
+  const rawText = response.getContentText();
+  const json = JSON.parse(rawText);
+  if (json.error) return { error: json.error.type + ': ' + json.error.message };
+  if (!json.content || !json.content[0]) return { error: '空回應：' + rawText };
 
   try {
-    const parsed = JSON.parse(json.content[0].text);
+    // 有時 AI 會包在 ```json ... ``` 裡，先清掉
+    const clean = json.content[0].text.replace(/```json\n?|\n?```/g, '').trim();
+    const parsed = JSON.parse(clean);
     return { success: true, data: parsed };
   } catch (e) {
-    return { error: 'AI 回傳格式錯誤：' + json.content[0].text };
+    return { error: 'JSON 解析失敗：' + json.content[0].text };
   }
 }
 

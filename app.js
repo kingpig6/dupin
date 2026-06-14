@@ -662,7 +662,9 @@ async function parseVoiceWithAI(text) {
   const res = await api('parseVoice', null, { text, customers: customerNames });
 
   if (!res.success || !res.data) {
-    if (resultEl) resultEl.textContent = '⚠ AI 解析失敗，已用基本辨識';
+    const msg = res.error || 'unknown';
+    if (resultEl) resultEl.textContent = '⚠ AI 解析失敗：' + msg;
+    showToast('AI 失敗：' + msg);
     return;
   }
 
@@ -699,6 +701,12 @@ async function parseVoiceWithAI(text) {
         calcRowAmount(idx);
       });
     }
+  }
+
+  // 交貨日期
+  if (d.deadline) {
+    const deadlineEl = document.getElementById('o_deadline');
+    if (deadlineEl) deadlineEl.value = d.deadline;
   }
 
   // 備註
