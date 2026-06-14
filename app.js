@@ -3,7 +3,7 @@
 // =============================================
 
 // ⚠️  部署 Apps Script 後，把網址貼到這裡
-const API_URL = 'YOUR_APPS_SCRIPT_URL_HERE';
+const API_URL = 'https://script.google.com/macros/s/AKfycbxzHdJMopMPPYvozDfrnRq3BUtcEg0QaCcVWlQEnrkPh0txbJim-JU3-FR4X0A7VTmglA/exec';
 
 // ── PWA 註冊 ────────────────────────────────
 if ('serviceWorker' in navigator) {
