@@ -434,7 +434,6 @@ function calcRowAmount(idx) {
   const el = document.getElementById(`r${idx}_amt`);
   if (el) el.textContent = '$' + (qty * price).toLocaleString();
 }
-}
 
 function generateOrderNo() {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
