@@ -7,7 +7,11 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbxzHdJMopMPPYvozDfrnRq3
 
 // ── PWA 註冊 ────────────────────────────────
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js')
+    .then(reg => reg.update()) // 每次開啟都強制檢查新版 SW
+    .catch(() => {});
+  // 新 SW 接管後自動重載頁面，確保用戶看到最新版
+  navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
 }
 
 // ── 狀態 ────────────────────────────────────
