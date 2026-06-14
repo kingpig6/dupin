@@ -335,6 +335,8 @@ function renderOrderForm() {
     `<option value="${c['客戶名稱']}" ${o['客戶'] === c['客戶名稱'] ? 'selected' : ''}>${c['客戶名稱']}</option>`
   ).join('');
 
+  const isNew = !state.editOrder;
+
   return `
   <div class="flex flex-col gap-3">
     <div>
@@ -375,10 +377,63 @@ function renderOrderForm() {
       <label class="section-title">備註</label>
       <textarea id="o_note" rows="2">${o['備註'] || ''}</textarea>
     </div>
+
+    ${isNew ? `
+    <div class="mt-2">
+      <div class="flex justify-between items-center mb-2">
+        <span class="section-title">品項</span>
+        <button type="button" class="text-amber-400 text-sm font-bold" onclick="addItemRow()">＋ 新增品項</button>
+      </div>
+      <div id="itemRows">
+        ${renderItemRow(0)}
+      </div>
+    </div>` : ''}
+
     <button class="btn btn-primary mt-2" onclick="saveOrder()">
       ${state.editOrder ? '儲存修改' : '建立訂單'}
     </button>
   </div>`;
+}
+
+function renderItemRow(idx) {
+  return `
+  <div class="card mb-2" id="itemRow_${idx}">
+    <div class="grid grid-cols-2 gap-2 mb-2">
+      <input placeholder="品名 *" id="r${idx}_name"/>
+      <input placeholder="規格" id="r${idx}_spec"/>
+      <input placeholder="數量" type="number" value="1" id="r${idx}_qty" oninput="calcRowAmount(${idx})"/>
+      <input placeholder="單價" type="number" id="r${idx}_price" oninput="calcRowAmount(${idx})"/>
+    </div>
+    <div class="grid grid-cols-2 gap-2 mb-1">
+      <input placeholder="車號（選填）" id="r${idx}_plate"/>
+      <input placeholder="負責師傅（選填）" id="r${idx}_worker"/>
+    </div>
+    <div class="flex justify-between items-center mt-1">
+      <span class="text-xs text-gray-400">金額：<span id="r${idx}_amt" class="text-amber-400">$0</span></span>
+      ${idx > 0 ? `<button type="button" onclick="removeItemRow(${idx})" class="text-red-400 text-sm">移除</button>` : ''}
+    </div>
+  </div>`;
+}
+
+let itemRowCount = 1;
+function addItemRow() {
+  const container = document.getElementById('itemRows');
+  const div = document.createElement('div');
+  div.innerHTML = renderItemRow(itemRowCount);
+  container.appendChild(div.firstElementChild);
+  itemRowCount++;
+}
+
+function removeItemRow(idx) {
+  document.getElementById(`itemRow_${idx}`)?.remove();
+}
+
+function calcRowAmount(idx) {
+  const qty = Number(document.getElementById(`r${idx}_qty`)?.value) || 0;
+  const price = Number(document.getElementById(`r${idx}_price`)?.value) || 0;
+  const el = document.getElementById(`r${idx}_amt`);
+  if (el) el.textContent = '$' + (qty * price).toLocaleString();
+}
 }
 
 function generateOrderNo() {
@@ -404,19 +459,46 @@ async function saveOrder() {
   const isNew = !state.editOrder;
   const orderNo = data['訂單編號'];
   showLoading(true);
+
   if (state.editOrder) {
     await api('update', '訂單', { key: orderNo, data });
   } else {
     await api('add', '訂單', { data });
+    // 收集並儲存品項
+    const rows = document.querySelectorAll('[id^="itemRow_"]');
+    for (const row of rows) {
+      const idx = row.id.replace('itemRow_', '');
+      const name = document.getElementById(`r${idx}_name`)?.value.trim();
+      if (!name) continue;
+      const qty   = Number(document.getElementById(`r${idx}_qty`)?.value) || 1;
+      const price = Number(document.getElementById(`r${idx}_price`)?.value) || 0;
+      const item = {
+        '品項ID':   Date.now().toString() + idx,
+        '訂單編號': orderNo,
+        '品名':     name,
+        '規格':     document.getElementById(`r${idx}_spec`)?.value.trim() || '',
+        '數量':     qty,
+        '單價':     price,
+        '金額':     qty * price,
+        '車號':     document.getElementById(`r${idx}_plate`)?.value.trim() || '',
+        '負責師傅': document.getElementById(`r${idx}_worker`)?.value.trim() || '',
+      };
+      await api('add', '品項', { data: item });
+    }
   }
+
   state.editOrder = null;
+  itemRowCount = 1;
   await loadAll();
   showView('orders');
-  showToast('訂單已建立，正在產生請款單 PDF…');
-  // 新訂單自動產生請款單 PDF（背景執行，不等結果）
+
   if (isNew) {
+    showToast('訂單已建立，正在產生請款單 PDF…');
+    // 自動產生同月同客戶合併請款單（背景）
     api('generatePDF', null, { orderNo, type: 'invoice' })
-      .then(r => { if (r.success) showToast('請款單 PDF 已存到雲端 ✓'); });
+      .then(r => { if (r.success) showToast('請款單 PDF 已更新到雲端 ✓'); });
+  } else {
+    showToast('已更新 ✓');
   }
 }
 
