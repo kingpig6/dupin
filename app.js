@@ -280,8 +280,11 @@ function renderOrderDetail() {
   </div>
 
   <div class="grid grid-cols-2 gap-3 mt-4">
-    <button class="btn btn-primary" onclick="showInvoice('${orderNo}')">📄 請款單</button>
-    <button class="btn btn-ghost"   onclick="deleteOrder('${orderNo}')">🗑️ 刪除訂單</button>
+    <button class="btn btn-primary" onclick="savePDF('${orderNo}','invoice')">📄 請款單 PDF</button>
+    <button class="btn btn-ghost"   onclick="savePDF('${orderNo}','work')">🔧 生產工單 PDF</button>
+  </div>
+  <div class="mt-3">
+    <button class="btn btn-ghost w-full text-red-400" onclick="deleteOrder('${orderNo}')">🗑️ 刪除訂單</button>
   </div>`;
 }
 
@@ -581,7 +584,21 @@ function queryStats() {
     </div>`;
 }
 
-// ── 請款單 ──────────────────────────────────
+// ── PDF 存到 Google 雲端硬碟 ────────────────
+async function savePDF(orderNo, type) {
+  const label = type === 'work' ? '生產工單' : '請款單';
+  showToast(`正在產生 ${label} PDF…`);
+  const result = await api('generatePDF', null, { orderNo, type });
+  if (result.error) {
+    showToast('產生失敗：' + result.error, 'error');
+    return;
+  }
+  // 開啟雲端硬碟檔案
+  window.open(result.url, '_blank');
+  showToast(`${label} 已存到雲端硬碟 ✓`);
+}
+
+// ── 請款單預覽（保留列印用）────────────────
 function showInvoice(orderNo) {
   state.viewOrder = state.orders.find(o => o['訂單編號'] === orderNo);
   showView('invoicePreview');

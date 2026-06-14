@@ -41,6 +41,7 @@ function handleRequest(e) {
       case 'delete':    result = deleteRow(sheet, body.key); break;
       case 'getSettings': result = getSettings(); break;
       case 'saveSettings': result = saveSettings(body.data); break;
+      case 'generatePDF': result = generateInvoicePDF(body.orderNo, body.type); break;
       default:          result = { error: 'Unknown action: ' + action };
     }
 
@@ -118,6 +119,128 @@ function getSettings() {
   const obj = {};
   rows.forEach(r => { if (r[0]) obj[r[0]] = r[1]; });
   return { data: obj };
+}
+
+// ── 產生請款單 PDF 存到雲端硬碟 ─────────────
+function generateInvoicePDF(orderNo, type) {
+  // 取得訂單
+  const orderSheet = ss.getSheetByName('訂單');
+  const orderRows = orderSheet.getDataRange().getValues();
+  const orderHeaders = orderRows[0];
+  let order = null;
+  for (let i = 1; i < orderRows.length; i++) {
+    if (String(orderRows[i][0]) === String(orderNo)) {
+      order = {};
+      orderHeaders.forEach((h, ci) => { order[h] = orderRows[i][ci]; });
+      break;
+    }
+  }
+  if (!order) return { error: '找不到訂單：' + orderNo };
+
+  // 取得品項
+  const itemSheet = ss.getSheetByName('品項');
+  const itemRows = itemSheet.getDataRange().getValues();
+  const itemHeaders = itemRows[0];
+  const items = [];
+  for (let i = 1; i < itemRows.length; i++) {
+    if (String(itemRows[i][1]) === String(orderNo)) {
+      const it = {};
+      itemHeaders.forEach((h, ci) => { it[h] = itemRows[i][ci]; });
+      items.push(it);
+    }
+  }
+
+  // 取得設定
+  const cfg = getSettings().data;
+
+  // 計算
+  const subtotal = items.reduce((s, it) => s + (Number(it['數量']) * Number(it['單價'])), 0);
+  const taxRate = Number(cfg['稅率'] || 0);
+  const total = subtotal * (1 + taxRate);
+  const d = new Date(order['開單日期']);
+  const roc = d.getFullYear() - 1911;
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+
+  // 品項列
+  const itemRows2 = items.map(it => `
+    <tr>
+      <td>${it['品名'] || ''}</td>
+      <td>${it['規格'] || ''}</td>
+      <td style="text-align:center">${it['數量']}</td>
+      <td style="text-align:right">$${Number(it['單價']).toLocaleString()}</td>
+      <td style="text-align:right">$${(Number(it['數量']) * Number(it['單價'])).toLocaleString()}</td>
+      ${type === 'work' ? `<td>${it['車號'] || ''}</td><td>${it['負責師傅'] || ''}</td>` : ''}
+    </tr>`).join('');
+
+  const extraHeaders = type === 'work'
+    ? '<th>車號</th><th>負責師傅</th>'
+    : '';
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body { font-family: 'Noto Sans TC', Arial, sans-serif; color:#000; padding:32px; font-size:13px; }
+  h2 { text-align:center; font-size:18px; margin-bottom:16px; }
+  .header { display:flex; justify-content:space-between; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; margin-bottom:16px; }
+  th,td { border:1px solid #999; padding:6px 8px; }
+  th { background:#f3f4f6; }
+  .totals { text-align:right; margin-bottom:16px; }
+  .info { font-size:12px; line-height:2; border-top:1px solid #ccc; padding-top:12px; }
+  ${type === 'work' ? '.process { margin-top:20px; } .process td { width:14%; text-align:center; }' : ''}
+</style></head><body>
+<h2>${month} 月${type === 'work' ? '生產工單' : '請款單'}</h2>
+<div class="header">
+  <div>客戶：<strong>${order['客戶'] || ''}</strong></div>
+  <div>中華民國 ${roc} 年 ${month} 月 ${day} 日</div>
+</div>
+<table>
+  <thead><tr>
+    <th>品名</th><th>規格</th><th>數量</th><th>單價</th><th>金額</th>${extraHeaders}
+  </tr></thead>
+  <tbody>${itemRows2}</tbody>
+</table>
+<div class="totals">
+  <div>未稅總和：<strong>$${subtotal.toLocaleString()}</strong></div>
+  ${type !== 'work' ? `<div style="font-size:16px;font-weight:bold;">總額（新台幣）：$${total.toLocaleString()}</div>` : ''}
+</div>
+${type === 'work' ? `
+<table class="process">
+  <thead><tr><th colspan="6">製程進度</th></tr>
+  <tr><td>設計稿</td><td>噴底</td><td>彩繪</td><td>烤漆</td><td>品檢</td><td>出貨</td></tr></thead>
+  <tbody><tr><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr></tbody>
+</table>` : `
+<div class="info">
+  報價廠商：${cfg['廠商名稱'] || '獨品工坊'}&nbsp;&nbsp;&nbsp;負責人：${cfg['負責人'] || '李安晟'}<br>
+  統一編號：${cfg['統一編號'] || '95323326'}&nbsp;&nbsp;&nbsp;電話：${cfg['電話'] || '0919726434'}<br>
+  匯款：${cfg['匯款銀行'] || '玉山銀行 808 台中分行'}<br>
+  戶名：${cfg['匯款戶名'] || '獨品工坊 李安晟'}&nbsp;&nbsp;&nbsp;帳號：${cfg['匯款帳號'] || '1366940043038'}<br>
+  報價 LINE：${cfg['LINE'] || 'kingpig6'}
+</div>`}
+</body></html>`;
+
+  // 產生 PDF
+  const blob = Utilities.newBlob(html, MimeType.HTML, orderNo + '.html');
+  const pdfBlob = blob.getAs(MimeType.PDF);
+  const label = type === 'work' ? '生產工單' : '請款單';
+  const fileName = `${label}_${orderNo}_${order['客戶']}.pdf`;
+  pdfBlob.setName(fileName);
+
+  // 找或建立「獨品工坊」資料夾
+  let folder;
+  const folders = DriveApp.getFoldersByName('獨品工坊開單');
+  if (folders.hasNext()) {
+    folder = folders.next();
+  } else {
+    folder = DriveApp.createFolder('獨品工坊開單');
+  }
+
+  // 存檔
+  const file = folder.createFile(pdfBlob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return { success: true, url: file.getUrl(), name: fileName };
 }
 
 // ── 設定：儲存 ──────────────────────────────
