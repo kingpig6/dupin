@@ -359,6 +359,7 @@ function renderOrderDetail() {
         </div>
         <div class="flex flex-col items-end gap-2 ml-3">
           <span class="text-amber-400 font-bold">$${Number(it['金額']).toLocaleString()}</span>
+          <button onclick="editItem('${it['品項ID']}')" class="text-amber-400 text-sm">✎</button>
           <button onclick="deleteItem('${it['品項ID']}')" class="text-amber-400 text-sm">✕</button>
         </div>
       </div>
@@ -468,6 +469,50 @@ async function addItem(orderNo) {
   // 背景同步，完成後再 loadAll 確保 ID 正確
   await api('add', '品項', { data });
   await loadAll();
+}
+
+function editItem(id) {
+  const it = state.items.find(x => x['品項ID'] === id);
+  if (!it) return;
+  // 在卡片原地展開編輯介面
+  const card = document.querySelector(`[onclick="editItem('${id}')"]`)?.closest('.card');
+  if (!card) return;
+  card.innerHTML = `
+    <div class="grid grid-cols-2 gap-2 mb-2">
+      <input id="ei_name" value="${it['品名']||''}" placeholder="品名"/>
+      <input id="ei_spec" value="${it['規格']||''}" placeholder="規格"/>
+      <input id="ei_qty"  value="${it['數量']||1}"  type="number" placeholder="數量" oninput="document.getElementById('ei_amt').textContent='$'+(this.value*(document.getElementById('ei_price').value||0)).toLocaleString()"/>
+      <input id="ei_price" value="${it['單價']||''}" type="number" placeholder="單價" oninput="document.getElementById('ei_amt').textContent='$'+((document.getElementById('ei_qty').value||1)*this.value).toLocaleString()"/>
+      <input id="ei_plate"  value="${it['車號']||''}"   placeholder="車號（選填）"/>
+      <input id="ei_worker" value="${it['負責師傅']||''}" placeholder="負責師傅（選填）"/>
+    </div>
+    <div class="flex justify-between items-center">
+      <span class="text-xs text-gray-400">金額：<span id="ei_amt" class="text-amber-400">$${Number(it['金額']).toLocaleString()}</span></span>
+      <div class="flex gap-2">
+        <button onclick="showView('orderDetail',state.viewOrder)" class="btn btn-ghost text-sm px-3">取消</button>
+        <button onclick="saveItem('${id}')" class="btn btn-primary text-sm px-3">儲存</button>
+      </div>
+    </div>`;
+}
+
+async function saveItem(id) {
+  const it = state.items.find(x => x['品項ID'] === id);
+  if (!it) return;
+  const qty   = Number(document.getElementById('ei_qty').value)   || 1;
+  const price = Number(document.getElementById('ei_price').value) || 0;
+  const data = {
+    '品名':     document.getElementById('ei_name').value.trim(),
+    '規格':     document.getElementById('ei_spec').value.trim(),
+    '數量':     qty,
+    '單價':     price,
+    '金額':     qty * price,
+    '車號':     document.getElementById('ei_plate').value.trim(),
+    '負責師傅': document.getElementById('ei_worker').value.trim(),
+  };
+  Object.assign(it, data);
+  showView('orderDetail', state.viewOrder);
+  await api('update', '品項', { key: id, data });
+  showToast('品項已更新 ✓');
 }
 
 async function deleteItem(id) {
