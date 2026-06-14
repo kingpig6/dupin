@@ -555,7 +555,7 @@ function startVoice() {
   voiceRecognition = new SpeechRecognition();
   voiceRecognition.lang = 'zh-TW';
   voiceRecognition.interimResults = true;
-  voiceRecognition.continuous = false;
+  voiceRecognition.continuous = true;
 
   const btn = document.getElementById('voiceBtn');
   const btnIcon = document.getElementById('voiceBtnIcon');
@@ -565,23 +565,34 @@ function startVoice() {
   voiceActive = true;
   btn.classList.replace('bg-blue-600', 'bg-red-600');
   btnIcon.textContent = '⏹';
-  btnText.textContent = '聆聽中… 點擊停止';
+  btnText.textContent = '聆聽中… 說完請點停止';
+
+  let silenceTimer = null;
+  let fullTranscript = '';
 
   voiceRecognition.onresult = e => {
-    const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
-    result.textContent = '辨識：' + transcript;
-    if (e.results[e.results.length - 1].isFinal) {
-      parseVoiceInput(transcript); // 規則解析（即時）
-      parseVoiceWithAI(transcript); // AI 解析（背景，更準確）
+    fullTranscript = Array.from(e.results).map(r => r[0].transcript).join('');
+    result.textContent = '辨識：' + fullTranscript;
+
+    // 偵測停頓 2 秒自動停止並送出
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      voiceRecognition.stop();
+    }, 2000);
+  };
+
+  voiceRecognition.onend = () => {
+    clearTimeout(silenceTimer);
+    resetVoiceBtn();
+    if (fullTranscript) {
+      parseVoiceInput(fullTranscript);
+      parseVoiceWithAI(fullTranscript);
     }
   };
 
   voiceRecognition.onerror = e => {
-    showToast('語音錯誤：' + e.error);
-    resetVoiceBtn();
-  };
-
-  voiceRecognition.onend = () => {
+    clearTimeout(silenceTimer);
+    if (e.error !== 'no-speech') showToast('語音錯誤：' + e.error);
     resetVoiceBtn();
   };
 
@@ -647,10 +658,6 @@ function parseVoiceInput(text) {
     if (plateEl) plateEl.value = plateMatch[0].toUpperCase();
   }
 
-  // 備註欄填入完整辨識文字供參考
-  const noteEl = document.getElementById('o_note');
-  if (noteEl && !noteEl.value) noteEl.value = text;
-
   showToast('語音已解析，AI 解析中…');
 }
 
@@ -709,11 +716,7 @@ async function parseVoiceWithAI(text) {
     if (deadlineEl) deadlineEl.value = d.deadline;
   }
 
-  // 備註
-  if (d.note) {
-    const noteEl = document.getElementById('o_note');
-    if (noteEl) noteEl.value = d.note;
-  }
+
 
   if (resultEl) resultEl.textContent = '✓ AI 解析完成，請確認後送出';
   showToast('AI 解析完成 ✓');
