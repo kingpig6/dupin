@@ -43,6 +43,7 @@ function handleRequest(e) {
       case 'saveSettings': result = saveSettings(body.data); break;
       case 'generatePDF': result = generateInvoicePDF(body.orderNo, body.type); break;
       case 'getPDFUrl':   result = getPDFUrl(body.orderNo, body.type); break;
+      case 'uploadPhoto': result = uploadPhoto(body.orderNo, body.base64, body.fileName); break;
       default:          result = { error: 'Unknown action: ' + action };
     }
 
@@ -313,6 +314,48 @@ function getSubFolder(type) {
   const subName = type === 'invoice' ? '請款單' : '生產工單';
   const subs = root.getFoldersByName(subName);
   return subs.hasNext() ? subs.next() : root.createFolder(subName);
+}
+
+// ── 上傳完工照片到 Google Drive ──────────────
+function uploadPhoto(orderNo, base64, fileName) {
+  // base64 格式：data:image/jpeg;base64,/9j/...
+  const matches = base64.match(/^data:(.+);base64,(.+)$/);
+  if (!matches) return { error: '圖片格式錯誤' };
+  const mimeType = matches[1];
+  const data = matches[2];
+
+  // 存到「獨品工坊開單/完工照片/訂單編號/」
+  const root = getRootFolder();
+  let photoRoot;
+  const pr = root.getFoldersByName('完工照片');
+  photoRoot = pr.hasNext() ? pr.next() : root.createFolder('完工照片');
+  let orderFolder;
+  const of = photoRoot.getFoldersByName(orderNo);
+  orderFolder = of.hasNext() ? of.next() : photoRoot.createFolder(orderNo);
+
+  const blob = Utilities.newBlob(Utilities.base64Decode(data), mimeType, fileName || 'photo.jpg');
+  const file = orderFolder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  // 取得直接顯示用的圖片網址
+  const imageUrl = `https://drive.google.com/uc?id=${file.getId()}`;
+
+  // 更新訂單的「完工照片」欄位（附加）
+  const sheet = ss.getSheetByName('訂單');
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  const photoCol = headers.indexOf('完工照片');
+  if (photoCol === -1) return { error: '試算表缺少「完工照片」欄位' };
+
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(orderNo)) {
+      const existing = rows[i][photoCol] ? rows[i][photoCol] + ',' : '';
+      sheet.getRange(i + 1, photoCol + 1).setValue(existing + imageUrl);
+      break;
+    }
+  }
+
+  return { success: true, url: imageUrl };
 }
 
 // ── 設定：儲存 ──────────────────────────────

@@ -295,6 +295,22 @@ function renderOrderDetail() {
     <span class="text-2xl font-bold text-amber-400">$${subtotal.toLocaleString()}</span>
   </div>
 
+  <!-- 完工照片區 -->
+  <div class="card mt-4">
+    <div class="flex justify-between items-center mb-3">
+      <span class="section-title">完工照片</span>
+      <label class="btn btn-ghost text-sm cursor-pointer">
+        📷 上傳
+        <input type="file" accept="image/*" capture="environment" class="hidden"
+          onchange="uploadPhoto('${orderNo}', this)">
+      </label>
+    </div>
+    <div id="photoGrid" class="grid grid-cols-3 gap-2">
+      ${renderPhotoGrid(o['完工照片'])}
+    </div>
+    <div id="uploadProgress" class="hidden mt-2 text-xs text-amber-400 text-center">上傳中…</div>
+  </div>
+
   <div class="grid grid-cols-2 gap-3 mt-4">
     <button class="btn btn-primary" onclick="savePDF('${orderNo}','invoice')">📄 請款單 PDF</button>
     <button class="btn btn-ghost"   onclick="savePDF('${orderNo}','work')">🔧 生產工單 PDF</button>
@@ -325,32 +341,45 @@ async function addItem(orderNo) {
     '車號': plate,
     '負責師傅': worker,
   };
-  showLoading(true);
+  // 樂觀更新：先加到本地 state
+  state.items.push({ ...data, 金額: data['數量'] * data['單價'] });
+  showView('orderDetail', state.viewOrder);
+  // 背景同步，完成後再 loadAll 確保 ID 正確
   await api('add', '品項', { data });
   await loadAll();
-  showView('orderDetail', state.orders.find(o => o['訂單編號'] === orderNo));
 }
 
 async function deleteItem(id) {
   if (!confirm('確定刪除此品項？')) return;
   const it = state.items.find(x => x['品項ID'] === id);
   const orderNo = it?.['訂單編號'];
-  showLoading(true);
-  await api('delete', '品項', { key: id });
-  await loadAll();
-  showView('orderDetail', state.orders.find(o => o['訂單編號'] === orderNo));
+  // 樂觀更新：先從本地移除
+  state.items = state.items.filter(x => x['品項ID'] !== id);
+  showView('orderDetail', state.viewOrder);
+  api('delete', '品項', { key: id }); // 背景同步
 }
 
-// 品項進度更新
+// 品項進度更新（樂觀更新：畫面先動，背景同步）
 async function cycleProgress(itemId, newProg) {
   const it = state.items.find(x => x['品項ID'] === itemId);
   if (!it) return;
-  await api('update', '品項', { key: itemId, data: { '進度': newProg } });
-  await loadAll();
-  showView('orderDetail', state.orders.find(o => o['訂單編號'] === it['訂單編號']));
+  it['進度'] = newProg;                          // 立刻更新本地
+  showView('orderDetail', state.viewOrder);       // 立刻重繪
+  api('update', '品項', { key: itemId, data: { '進度': newProg } }); // 背景同步
 }
 
-// 狀態變更（完工時自動記錄完工日期並產生請款單）
+// 收款狀態變更（樂觀更新）
+async function updateOrderField(orderNo, field, value) {
+  const o = state.orders.find(x => x['訂單編號'] === orderNo);
+  if (!o) return;
+  o[field] = value;
+  state.viewOrder = o;
+  showView('orderDetail', o);
+  api('update', '訂單', { key: orderNo, data: { [field]: value } });
+  showToast('已更新');
+}
+
+// 狀態變更（完工時記錄日期並產生請款單）
 async function updateOrderStatus(orderNo, newStatus) {
   const o = state.orders.find(x => x['訂單編號'] === orderNo);
   if (!o) return;
@@ -358,20 +387,20 @@ async function updateOrderStatus(orderNo, newStatus) {
   if (newStatus === '完工交貨') {
     data['完工日期'] = new Date().toISOString().slice(0, 10);
   }
+  // 樂觀更新
   o['狀態'] = newStatus;
   if (data['完工日期']) o['完工日期'] = data['完工日期'];
   state.viewOrder = o;
-  await api('update', '訂單', { key: orderNo, data });
-  // 完工時自動更新請款單 PDF（背景）
+  showView('orderDetail', o);
+  // 背景同步
+  api('update', '訂單', { key: orderNo, data });
   if (newStatus === '完工交貨') {
-    showToast('完工！正在更新請款單 PDF…');
+    showToast('完工！背景產生請款單 PDF…');
     api('generatePDF', null, { orderNo, type: 'invoice' })
       .then(r => { if (r.success) showToast('請款單 PDF 已更新 ✓'); });
   } else {
     showToast('狀態已更新');
   }
-  await loadAll();
-  showView('orderDetail', state.orders.find(x => x['訂單編號'] === orderNo));
 }
 
 // ── 訂單表單（新增/編輯）───────────────────
@@ -719,6 +748,62 @@ function queryStats() {
       </div>
       ${detail || '<p class="text-gray-500 text-sm">無符合資料</p>'}
     </div>`;
+}
+
+// ── 完工照片 ────────────────────────────────
+function renderPhotoGrid(photoField) {
+  if (!photoField) return '<p class="text-gray-500 text-xs col-span-3">尚無照片</p>';
+  const urls = String(photoField).split(',').filter(u => u.trim());
+  if (!urls.length) return '<p class="text-gray-500 text-xs col-span-3">尚無照片</p>';
+  return urls.map(url => `
+    <a href="${url.trim()}" target="_blank">
+      <img src="${url.trim()}" class="w-full aspect-square object-cover rounded-lg border border-gray-600"/>
+    </a>`).join('');
+}
+
+async function uploadPhoto(orderNo, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const prog = document.getElementById('uploadProgress');
+  prog.classList.remove('hidden');
+
+  // 壓縮圖片
+  const base64 = await compressImage(file, 1024);
+  const result = await api('uploadPhoto', null, { orderNo, base64, fileName: file.name });
+
+  prog.classList.add('hidden');
+  input.value = '';
+
+  if (result.error) { showToast('上傳失敗：' + result.error, 'error'); return; }
+
+  // 更新本地 state
+  const o = state.orders.find(x => x['訂單編號'] === orderNo);
+  if (o) {
+    const existing = o['完工照片'] ? o['完工照片'] + ',' : '';
+    o['完工照片'] = existing + result.url;
+    state.viewOrder = o;
+    document.getElementById('photoGrid').innerHTML = renderPhotoGrid(o['完工照片']);
+  }
+  showToast('照片已上傳 ✓');
+}
+
+function compressImage(file, maxPx) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = Math.min(maxPx / img.width, maxPx / img.height, 1);
+        const canvas = document.createElement('canvas');
+        canvas.width  = img.width  * ratio;
+        canvas.height = img.height * ratio;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 // ── PDF 開啟或產生 ───────────────────────────
