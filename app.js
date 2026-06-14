@@ -350,6 +350,7 @@ function renderOrderDetail() {
         <div class="flex-1">
           <div class="font-semibold">${it['品名']}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
           <div class="text-xs text-gray-400 mb-2">${it['數量']} × $${Number(it['單價']).toLocaleString()}${it['車號'] ? ' · ' + it['車號'] : ''}</div>
+          ${it['備註'] ? `<div class="text-xs text-gray-500 mb-2">備註：${it['備註']}</div>` : ''}
           <select onchange="cycleProgress('${it['品項ID']}',this.value)"
             class="${color} text-white text-xs px-2 py-1 rounded-full font-semibold border-0 outline-none cursor-pointer">
             <option value="待施工" ${prog==='待施工'?'selected':''}>待施工</option>
@@ -469,6 +470,7 @@ function editItem(id) {
       <input id="ei_plate"  value="${it['車號']||''}"   placeholder="車號（選填）"/>
       <input id="ei_worker" value="${it['負責師傅']||''}" placeholder="負責師傅（選填）"/>
     </div>
+    <textarea id="ei_note" rows="2" placeholder="備註（選填）" class="w-full mb-2">${it['備註']||''}</textarea>
     <div class="flex justify-between items-center mb-3">
       <span class="text-xs text-gray-400">金額：<span id="ei_amt" class="text-amber-400">$${Number(it['金額']).toLocaleString()}</span></span>
       <div class="flex gap-2">
@@ -505,6 +507,7 @@ async function saveItem(id) {
     '金額':     qty * price,
     '車號':     document.getElementById('ei_plate').value.trim(),
     '負責師傅': document.getElementById('ei_worker').value.trim(),
+    '備註':     document.getElementById('ei_note').value.trim(),
   };
   Object.assign(it, data);
   showView('orderDetail', state.viewOrder);
