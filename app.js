@@ -166,20 +166,44 @@ function render() {
 }
 
 // ── 訂單列表 ────────────────────────────────
+const sectionOpen = { active: true, done: false, paid: false };
+
+function toggleSection(key) {
+  sectionOpen[key] = !sectionOpen[key];
+  renderApp();
+}
+
 function renderOrders() {
-  const visible = state.orders.filter(o => !(o['狀態'] === '完工交貨' && o['收款狀態'] === '已收款'));
-  const active = visible.filter(o => o['狀態'] === '進行中');
-  const done   = visible.filter(o => o['狀態'] === '完工交貨');
+  // 分三類
+  const active = state.orders
+    .filter(o => o['狀態'] === '進行中')
+    .sort((a, b) => {
+      const da = a['交貨期限'] ? new Date(a['交貨期限']) : new Date('9999-12-31');
+      const db = b['交貨期限'] ? new Date(b['交貨期限']) : new Date('9999-12-31');
+      return da - db;
+    })
+    .slice(0, 50);
+
+  const done = state.orders
+    .filter(o => o['狀態'] === '完工交貨' && o['收款狀態'] !== '已收款')
+    .sort((a, b) => new Date(b['完工日期'] || b['開單日期']) - new Date(a['完工日期'] || a['開單日期']))
+    .slice(0, 50);
+
+  const paid = state.orders
+    .filter(o => o['狀態'] === '完工交貨' && o['收款狀態'] === '已收款')
+    .sort((a, b) => new Date(b['完工日期'] || b['開單日期']) - new Date(a['完工日期'] || a['開單日期']))
+    .slice(0, 50);
 
   const orderCard = o => {
     const subtotal = orderSubtotal(o['訂單編號']);
+    const deadline = o['交貨期限'] ? `· 交貨 ${o['交貨期限']}` : '';
     return `
     <div class="card cursor-pointer" onclick="openOrder('${o['訂單編號']}')">
       <div class="flex justify-between items-start mb-1">
         <span class="font-semibold">${o['客戶'] || '-'}</span>
         <span class="text-amber-400 font-bold">$${subtotal.toLocaleString()}</span>
       </div>
-      <div class="text-xs text-gray-400 mb-2">${o['訂單編號']} · ${o['開單日期']}</div>
+      <div class="text-xs text-gray-400 mb-2">${o['訂單編號']} · ${o['開單日期']} ${deadline}</div>
       <div class="flex gap-2">
         <span class="badge-${o['狀態']} text-white text-xs px-2 py-0.5 rounded-full">${o['狀態']}</span>
         <span class="badge-${o['收款狀態']} text-white text-xs px-2 py-0.5 rounded-full">${o['收款狀態']}</span>
@@ -187,11 +211,21 @@ function renderOrders() {
     </div>`;
   };
 
+  const sectionHeader = (label, count, key) => `
+    <div class="flex justify-between items-center cursor-pointer py-2 mt-2" onclick="toggleSection('${key}')">
+      <span class="section-title mb-0">${label}（${count}）</span>
+      <span class="text-gray-400 text-lg">${sectionOpen[key] ? '▲' : '▼'}</span>
+    </div>`;
+
   return `
-  <div class="section-title">進行中（${active.length}）</div>
-  ${active.length ? active.map(orderCard).join('') : '<p class="text-gray-500 text-sm mb-6">暫無進行中訂單</p>'}
-  <div class="section-title mt-4">完工交貨（${done.length}）</div>
-  ${done.length ? done.map(orderCard).join('') : '<p class="text-gray-500 text-sm">暫無完工訂單</p>'}`;
+  ${sectionHeader('進行中', active.length, 'active')}
+  ${sectionOpen.active ? (active.length ? active.map(orderCard).join('') : '<p class="text-gray-500 text-sm mb-4">暫無進行中訂單</p>') : ''}
+
+  ${sectionHeader('完工交貨', done.length, 'done')}
+  ${sectionOpen.done ? (done.length ? done.map(orderCard).join('') : '<p class="text-gray-500 text-sm mb-4">暫無完工訂單</p>') : ''}
+
+  ${sectionHeader('已交貨收款', paid.length, 'paid')}
+  ${sectionOpen.paid ? (paid.length ? paid.map(orderCard).join('') : '<p class="text-gray-500 text-sm mb-4">暫無已收款訂單</p>') : ''}`;
 }
 
 function orderSubtotal(orderNo) {
