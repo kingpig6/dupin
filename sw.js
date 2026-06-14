@@ -1,4 +1,4 @@
-const CACHE = 'dupin-v4';
+const CACHE = 'dupin-v5';
 const ASSETS = ['/dupin/', '/dupin/index.html', '/dupin/app.js', '/dupin/manifest.json'];
 
 self.addEventListener('install', e => {
