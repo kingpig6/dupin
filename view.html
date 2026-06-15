@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#f59e0b">
+<title>獨品工坊 · 訂單查詢</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#111827; color:#f3f4f6; font-family:'Noto Sans TC',sans-serif; }
+  .card { background:#1f2937; border-radius:12px; padding:16px; margin-bottom:12px; }
+  .section-title { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; margin-top:20px; }
+  .badge-active { background:#1d4ed8; color:#fff; font-size:11px; padding:2px 8px; border-radius:99px; display:inline-block; }
+  .badge-done   { background:#15803d; color:#fff; font-size:11px; padding:2px 8px; border-radius:99px; display:inline-block; }
+</style>
+</head>
+<body class="px-4 pt-6 pb-10 max-w-lg mx-auto">
+
+<div class="flex items-center gap-3 mb-6">
+  <div class="w-10 h-10 rounded-xl bg-amber-400 flex items-center justify-center text-gray-900 font-black text-lg">獨</div>
+  <div>
+    <div class="font-bold text-amber-400 text-lg">獨品工坊</div>
+    <div id="subtitle" class="text-xs text-gray-400">訂單查詢</div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="text-center text-gray-500 mt-20">載入中…</div>
+</div>
+
+<script>
+const API_URL = 'https://script.google.com/macros/s/AKfycbxzHdJMopMPPYvozDfrnRq3BUtcEg0QaCcVWlQEnrkPh0txbJim-JU3-FR4X0A7VTmglA/exec';
+
+const token = new URLSearchParams(location.search).get('token');
+
+async function load() {
+  if (!token) {
+    document.getElementById('app').innerHTML = '<p class="text-center text-red-400 mt-20">無效的查詢連結</p>';
+    return;
+  }
+  const res = await fetch(API_URL + '?action=customerView&token=' + encodeURIComponent(token));
+  const data = await res.json();
+  if (data.error) {
+    document.getElementById('app').innerHTML = `<p class="text-center text-red-400 mt-20">${data.error === 'Invalid token' ? '連結無效或已過期' : data.error}</p>`;
+    return;
+  }
+
+  document.getElementById('subtitle').textContent = data.customers.join('、') + ' · 訂單查詢';
+  document.title = '獨品工坊 · ' + data.customers.join('、');
+
+  const items = data.items;
+  const activeItems = items.filter(it => it['進度'] !== '完成');
+  const doneItems   = items.filter(it => it['進度'] === '完成');
+
+  const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-700', '完成': 'bg-green-700' };
+
+  function renderItems(list) {
+    if (!list.length) return '<p class="text-gray-500 text-sm mb-4">暫無項目</p>';
+    // 按客戶分組
+    const groups = {};
+    list.forEach(it => {
+      const c = it['客戶'] || '未知';
+      if (!groups[c]) groups[c] = [];
+      groups[c].push(it);
+    });
+    return Object.entries(groups).map(([cus, its]) => `
+      <div class="mb-4">
+        ${Object.keys(groups).length > 1 ? `<div class="text-xs text-amber-400 font-semibold mb-2">${cus}</div>` : ''}
+        ${its.map(it => {
+          const prog = it['進度'] || '待施工';
+          const color = progColor[prog] || 'bg-gray-600';
+          const amt = Number(it['金額'] || 0);
+          return `
+          <div class="card">
+            <div class="flex justify-between items-start">
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
+                <div class="text-xs text-gray-400 mt-0.5">
+                  ${it['數量']} × $${Number(it['單價']).toLocaleString()}
+                </div>
+                ${it['交貨期限'] ? `<div class="text-xs text-gray-500 mt-0.5">預計交期：${it['交貨期限']}</div>` : ''}
+                ${it['完工日期'] ? `<div class="text-xs text-amber-400 mt-0.5">完工：${it['完工日期']}</div>` : ''}
+                ${it['備註'] ? `<div class="text-xs text-gray-500 mt-0.5">備註：${it['備註']}</div>` : ''}
+                <div class="mt-2">
+                  <span class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${prog}</span>
+                </div>
+              </div>
+              ${amt ? `<div class="text-amber-400 font-bold ml-3 shrink-0">$${amt.toLocaleString()}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('app').innerHTML = `
+    <div class="section-title">進行中（${activeItems.length}）</div>
+    ${renderItems(activeItems)}
+    <div class="section-title">完工待收款（${doneItems.length}）</div>
+    ${renderItems(doneItems)}
+    <div class="text-center text-xs text-gray-600 mt-8">獨品工坊客製彩繪 · 僅供訂單查詢</div>
+  `;
+}
+
+load();
+</script>
+</body>
+</html>
