@@ -32,6 +32,14 @@ function handleRequest(e) {
     const action = params.action || body.action;
     const sheet = params.sheet || body.sheet;
     const secret = params.secret || body.secret;
+
+    // 客戶查詢連結：用 token 驗證，不需要 API_SECRET
+    if (action === 'customerView') {
+      return ContentService
+        .createTextOutput(JSON.stringify(getCustomerView(params.token || body.token)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const expected = PropertiesService.getScriptProperties().getProperty('API_SECRET');
     if (expected && secret !== expected) {
       return ContentService.createTextOutput(JSON.stringify({ error: 'Unauthorized' })).setMimeType(ContentService.MimeType.JSON);
@@ -61,6 +69,48 @@ function handleRequest(e) {
       .createTextOutput(JSON.stringify({ error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// ── 客戶查詢連結：用 token 取得指定客戶的進行中+完工未收款項目 ──
+function getCustomerView(token) {
+  if (!token) return { error: 'Missing token' };
+  const linkSheet = ss.getSheetByName('客戶連結');
+  if (!linkSheet) return { error: '找不到「客戶連結」工作表' };
+  const rows = linkSheet.getDataRange().getValues();
+  // 找 token 對應的客戶名稱（跳過第一列標題）
+  let customers = [];
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]).trim() === String(token).trim()) {
+      customers = String(rows[i][1]).split(',').map(s => s.trim()).filter(Boolean);
+      break;
+    }
+  }
+  if (!customers.length) return { error: 'Invalid token' };
+
+  const itemSheet = ss.getSheetByName('工作項目');
+  if (!itemSheet) return { error: '找不到工作項目工作表' };
+  const all = itemSheet.getDataRange().getValues();
+  const headers = all[0];
+
+  const visible = ['工作ID','訂單編號','客戶','開單日期','品名','規格','數量','單價','金額','交貨期限','進度','完工日期','收款狀態','備註'];
+
+  const items = [];
+  for (let i = 1; i < all.length; i++) {
+    const row = all[i];
+    const rowObj = {};
+    headers.forEach((h, ci) => { rowObj[h] = row[ci]; });
+    const cus = String(rowObj['客戶'] || '');
+    if (!customers.includes(cus)) continue;
+    // 只回傳：進行中（進度≠完成）或 完工未收款（進度=完成 且 收款狀態≠已收款）
+    const done = rowObj['進度'] === '完成';
+    const paid = rowObj['收款狀態'] === '已收款';
+    if (paid) continue; // 已收款不顯示
+    const filtered = {};
+    visible.forEach(k => { filtered[k] = rowObj[k] !== undefined ? rowObj[k] : ''; });
+    items.push(filtered);
+  }
+
+  return { customers, items };
 }
 
 // ── 通用：取得整張表 ────────────────────────
