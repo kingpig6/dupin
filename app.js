@@ -256,25 +256,6 @@ function renderOrdersContent() {
       </span>`).join('');
     const more = items.length > 4 ? `<span class="text-xs text-gray-500">+${items.length - 4}</span>` : '';
 
-    let invoiceBtn = '';
-    if (section === 'done') {
-      // 依完工月份分組，每月一個「開請款單」按鈕
-      const monthGroups = {};
-      items.forEach(it => {
-        const m = (it['完工日期'] || '').slice(0, 7);
-        if (!m) return;
-        if (!monthGroups[m]) monthGroups[m] = [];
-        monthGroups[m].push(it['工作ID']);
-      });
-      invoiceBtn = Object.entries(monthGroups)
-        .sort()
-        .map(([month, ids]) => `
-          <button class="btn btn-primary text-xs mt-2 w-full"
-            onclick="event.stopPropagation();openInvoice(${JSON.stringify(ids)})">
-            開請款單 ${month}（${ids.length} 件）
-          </button>`).join('');
-    }
-
     return `
     <div class="card cursor-pointer" onclick="openCustomer('${customer.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${section}')">
       <div class="flex justify-between items-start mb-0.5">
@@ -282,7 +263,6 @@ function renderOrdersContent() {
         <span class="text-amber-400 font-bold text-lg">$${total.toLocaleString()}</span>
       </div>
       <div class="flex flex-wrap gap-1 mb-1">${badges}${more}</div>
-      ${invoiceBtn}
     </div>`;
   };
 
