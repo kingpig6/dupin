@@ -593,33 +593,37 @@ async function deleteItemPhoto(itemId, idx) {
 
 // ── PDF 操作 ─────────────────────────────────
 async function openInvoice(itemIds) {
+  const win = window.open('', '_blank'); // 先開視窗保留使用者手勢
   showToast('正在產生請款單 PDF…');
   const result = await api('generateInvoice', null, { itemIds, type: 'invoice' });
-  if (result.error) { showToast('產生失敗：' + result.error, 'error'); return; }
-
-  // 更新本地狀態
+  if (result.error) {
+    win.close();
+    showToast('產生失敗：' + result.error, 'error');
+    return;
+  }
   itemIds.forEach(id => {
     const it = state.items.find(x => String(x['工作ID']) === String(id));
     if (it) it['請款單狀態'] = '已開單';
   });
   saveCache();
   render();
-  window.open(result.url, '_blank');
+  win.location.href = result.url;
   showToast('請款單 PDF 已存到雲端並開啟 ✓');
 }
 
 async function openWorkOrder(itemIds) {
+  const win = window.open('', '_blank');
   showToast('正在查詢生產工單 PDF…');
   const found = await api('getPDFUrl', null, { itemId: itemIds[0], type: 'work' });
   if (found.url) {
-    window.open(found.url, '_blank');
+    win.location.href = found.url;
     showToast('已開啟雲端生產工單 ✓');
     return;
   }
   showToast('正在產生生產工單 PDF…');
   const result = await api('generateInvoice', null, { itemIds, type: 'work' });
-  if (result.error) { showToast('產生失敗：' + result.error, 'error'); return; }
-  window.open(result.url, '_blank');
+  if (result.error) { win.close(); showToast('產生失敗：' + result.error, 'error'); return; }
+  win.location.href = result.url;
   showToast('生產工單已存到雲端並開啟 ✓');
 }
 
