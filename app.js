@@ -389,19 +389,28 @@ function renderCustomerDetail() {
     </div>`;
   }).join('');
 
-  // 生產工單按鈕：依訂單編號批次
+  // 底部按鈕：done 區塊→開請款單，其他→生產工單
   const batches = {};
   its.forEach(it => {
     const b = it['訂單編號'] || '(無)';
     if (!batches[b]) batches[b] = [];
     batches[b].push(it['工作ID']);
   });
-  const workOrderBtns = Object.entries(batches).map(([bNo, ids]) =>
-    `<button class="btn btn-ghost text-sm mt-1 w-full"
-      onclick="openWorkOrder(${JSON.stringify(ids)})">
-      生產工單 ${bNo}（${ids.length} 件）
-    </button>`
-  ).join('');
+
+  const isDone = state.viewSection === 'done';
+  const actionBtns = Object.entries(batches).map(([bNo, ids]) => {
+    if (isDone) {
+      return `<button class="btn btn-primary text-sm mt-1 w-full"
+        onclick="openInvoice(${JSON.stringify(ids)})">
+        開請款單 ${bNo}（${ids.length} 件）
+      </button>`;
+    } else {
+      return `<button class="btn btn-ghost text-sm mt-1 w-full"
+        onclick="openWorkOrder(${JSON.stringify(ids)})">
+        生產工單 ${bNo}（${ids.length} 件）
+      </button>`;
+    }
+  }).join('');
 
   return `
   <div class="card mb-3">
@@ -414,7 +423,7 @@ function renderCustomerDetail() {
   <div class="section-title">工作項目</div>
   ${itemCards || '<p class="text-gray-500 text-sm mb-4">尚無工作項目</p>'}
 
-  ${workOrderBtns ? `<div class="mt-4">${workOrderBtns}</div>` : ''}`;
+  ${actionBtns ? `<div class="mt-4">${actionBtns}</div>` : ''}`;
 }
 
 // ── 品項進度更新（樂觀更新，自動完工日期）──
