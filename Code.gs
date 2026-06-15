@@ -379,6 +379,98 @@ function uploadItemPhoto(itemId, base64, fileName) {
   return { success: true, url: imageUrl };
 }
 
+// ── 一次性資料搬移（執行後可刪除）──────────
+// 使用方式：在 Apps Script 介面選擇 migrateToWorkItems，按執行
+function migrateToWorkItems() {
+  const HEADERS = [
+    '工作ID','訂單編號','客戶','開單日期','品名','規格','數量','單價','金額',
+    '交貨期限','進度','完工日期','收款狀態','車號','負責師傅','備註','完工照片','請款單狀態'
+  ];
+
+  // 建立或清空「工作項目」工作表
+  let wiSheet = ss.getSheetByName('工作項目');
+  if (!wiSheet) {
+    wiSheet = ss.insertSheet('工作項目');
+  } else {
+    wiSheet.clearContents();
+  }
+  wiSheet.appendRow(HEADERS);
+
+  // 讀取舊資料
+  const orderSheet = ss.getSheetByName('訂單');
+  const itemSheet  = ss.getSheetByName('品項');
+  if (!orderSheet || !itemSheet) {
+    SpreadsheetApp.getUi().alert('找不到「訂單」或「品項」工作表，請確認名稱正確。');
+    return;
+  }
+
+  const orderRows   = orderSheet.getDataRange().getValues();
+  const orderHeaders = orderRows[0];
+  const orders = {};
+  for (let i = 1; i < orderRows.length; i++) {
+    const o = {};
+    orderHeaders.forEach((h, ci) => { o[h] = orderRows[i][ci]; });
+    orders[String(o['訂單編號'])] = o;
+  }
+
+  const itemRows    = itemSheet.getDataRange().getValues();
+  const itemHeaders = itemRows[0];
+  let count = 0;
+
+  for (let i = 1; i < itemRows.length; i++) {
+    const it = {};
+    itemHeaders.forEach((h, ci) => { it[h] = itemRows[i][ci]; });
+    const o = orders[String(it['訂單編號'])] || {};
+
+    // 進度對應：舊品項無進度欄位時預設「待施工」；若訂單狀態=完工交貨則設「完成」
+    let 進度 = it['進度'] || '';
+    if (!進度) 進度 = (o['狀態'] === '完工交貨') ? '完成' : '待施工';
+
+    // 完工日期
+    const 完工日期 = (進度 === '完成' && o['完工日期']) ? formatDateGs(o['完工日期']) : '';
+
+    // 收款狀態：從訂單繼承
+    let 收款狀態 = o['收款狀態'] || '未收款';
+    if (收款狀態 === '收款訂金') 收款狀態 = '未收款'; // 訂金視為未收款
+
+    const row = HEADERS.map(h => {
+      switch(h) {
+        case '工作ID':     return 'W' + (Date.now() + count).toString() + i;
+        case '訂單編號':   return it['訂單編號'] || '';
+        case '客戶':       return o['客戶'] || '';
+        case '開單日期':   return o['開單日期'] ? formatDateGs(o['開單日期']) : '';
+        case '品名':       return it['品名'] || '';
+        case '規格':       return it['規格'] || '';
+        case '數量':       return Number(it['數量']) || 0;
+        case '單價':       return Number(it['單價']) || 0;
+        case '金額':       return (Number(it['數量']) || 0) * (Number(it['單價']) || 0);
+        case '交貨期限':   return o['交貨期限'] ? formatDateGs(o['交貨期限']) : '';
+        case '進度':       return 進度;
+        case '完工日期':   return 完工日期;
+        case '收款狀態':   return 收款狀態;
+        case '車號':       return it['車號'] || '';
+        case '負責師傅':   return it['負責師傅'] || '';
+        case '備註':       return it['備註'] || o['備註'] || '';
+        case '完工照片':   return it['完工照片'] || o['完工照片'] || '';
+        case '請款單狀態': return '';
+        default: return '';
+      }
+    });
+    wiSheet.appendRow(row);
+    count++;
+    Utilities.sleep(50); // 避免超過配額
+  }
+
+  SpreadsheetApp.getUi().alert(`搬移完成！共轉入 ${count} 筆工作項目。`);
+}
+
+function formatDateGs(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d)) return String(v);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
 // ── Claude AI 語音解析 ───────────────────────
 function parseVoiceWithAI(text, customers) {
   const key = PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY');
