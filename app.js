@@ -369,29 +369,24 @@ function renderCustomerDetail() {
     </div>`;
   }).join('');
 
-  // 底部按鈕：done 區塊→開請款單，其他→生產工單
-  const batches = {};
-  its.forEach(it => {
-    const b = it['訂單編號'] || '(無)';
-    if (!batches[b]) batches[b] = [];
-    batches[b].push(it['工作ID']);
-  });
-
+  // 底部按鈕：done 區塊才顯示「開請款單」（生產工單移到各品項編輯面板內）
   const isDone = state.viewSection === 'done';
-  const actionBtns = Object.entries(batches).map(([bNo, ids]) => {
-    const idsArg = "[" + ids.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
-    if (isDone) {
+  let actionBtns = '';
+  if (isDone) {
+    const batches = {};
+    its.forEach(it => {
+      const b = it['訂單編號'] || '(無)';
+      if (!batches[b]) batches[b] = [];
+      batches[b].push(it['工作ID']);
+    });
+    actionBtns = Object.entries(batches).map(([bNo, ids]) => {
+      const idsArg = "[" + ids.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
       return `<button class="btn btn-primary text-sm mt-1 w-full"
         onclick="openInvoice(${idsArg})">
         開請款單 ${bNo}（${ids.length} 件）
       </button>`;
-    } else {
-      return `<button class="btn btn-ghost text-sm mt-1 w-full"
-        onclick="openWorkOrder(${idsArg})">
-        生產工單 ${bNo}（${ids.length} 件）
-      </button>`;
-    }
-  }).join('');
+    }).join('');
+  }
 
   return `
   <div class="card mb-3">
@@ -466,6 +461,12 @@ function editItem(id) {
   if (!it) return;
   const card = document.getElementById(`itemCard_${id}`);
   if (!card) return;
+  // 同訂單編號的整批項目（生產工單依批次產生）
+  const batchNo = it['訂單編號'] || '';
+  const batchIds = state.items
+    .filter(x => (x['訂單編號'] || '') === batchNo)
+    .map(x => x['工作ID']);
+  const batchArg = "[" + batchIds.map(bid => "'" + String(bid).replace(/'/g, "\\'") + "'").join(",") + "]";
   card.innerHTML = `
     <div class="grid grid-cols-2 gap-2 mb-2">
       <input id="ei_name"  value="${it['品名']||''}"       placeholder="品名"/>
@@ -502,7 +503,10 @@ function editItem(id) {
         ${renderItemPhotoGrid(it['完工照片'], id)}
       </div>
       <div id="itemUploadProg_${id}" class="hidden text-xs text-amber-400 text-center mt-1">上傳中…</div>
-    </div>`;
+    </div>
+    ${batchNo ? `<button class="btn btn-ghost text-sm w-full mt-3" onclick="openWorkOrder(${batchArg})">
+      生產工單 ${batchNo}（${batchIds.length} 件）
+    </button>` : ''}`;
 }
 
 async function saveItem(id) {
