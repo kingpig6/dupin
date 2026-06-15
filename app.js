@@ -379,14 +379,15 @@ function renderCustomerDetail() {
 
   const isDone = state.viewSection === 'done';
   const actionBtns = Object.entries(batches).map(([bNo, ids]) => {
+    const idsArg = "[" + ids.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
     if (isDone) {
       return `<button class="btn btn-primary text-sm mt-1 w-full"
-        onclick="openInvoice(${JSON.stringify(ids)})">
+        onclick="openInvoice(${idsArg})">
         開請款單 ${bNo}（${ids.length} 件）
       </button>`;
     } else {
       return `<button class="btn btn-ghost text-sm mt-1 w-full"
-        onclick="openWorkOrder(${JSON.stringify(ids)})">
+        onclick="openWorkOrder(${idsArg})">
         生產工單 ${bNo}（${ids.length} 件）
       </button>`;
     }
