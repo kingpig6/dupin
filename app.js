@@ -20,6 +20,7 @@ let state = {
   customers: [],
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
+  viewSection: null,  // 從哪個區塊進入（active/done/invoiced/paid）
   editCustomer: null,
   loading: false,
   search: '',
@@ -154,12 +155,15 @@ function render() {
       actions.innerHTML = '';
       app.innerHTML = renderOrders();
       break;
-    case 'customerDetail':
-      title.textContent = state.viewCustomer || '工作項目';
+    case 'customerDetail': {
+      const sectionLabel = { active:'進行中', done:'完工交貨', invoiced:'已開請款單', paid:'已交貨收款' };
+      const secTag = state.viewSection ? ` · ${sectionLabel[state.viewSection]||''}` : '';
+      title.textContent = (state.viewCustomer || '工作項目') + secTag;
       back.classList.remove('hidden');
       actions.innerHTML = `<button class="btn btn-ghost text-sm" onclick="showView('newOrder')">＋ 新增</button>`;
       app.innerHTML = renderCustomerDetail();
       break;
+    }
     case 'newOrder':
       title.textContent = '新增工作';
       back.classList.remove('hidden');
@@ -272,7 +276,7 @@ function renderOrdersContent() {
     }
 
     return `
-    <div class="card cursor-pointer" onclick="openCustomer('${customer.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">
+    <div class="card cursor-pointer" onclick="openCustomer('${customer.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${section}')">
       <div class="flex justify-between items-start mb-0.5">
         <span class="text-lg font-bold">${customer}</span>
         <span class="text-amber-400 font-bold text-lg">$${total.toLocaleString()}</span>
@@ -312,19 +316,29 @@ function renderOrdersContent() {
   ${sectionBody(paidItems, 'paid', '暫無已收款工作', 'paid')}`;
 }
 
-function openCustomer(name) {
+function openCustomer(name, section) {
+  state.viewSection = section || null;
   showView('customerDetail', name);
 }
 
 // ── 客戶詳細（工作項目列表）────────────────
 function renderCustomerDetail() {
-  const name = state.viewCustomer;
-  const its  = state.items.filter(it => it['客戶'] === name);
+  const name    = state.viewCustomer;
+  const section = state.viewSection;
+
+  // 依進入的區塊篩選品項
+  const sectionFilter = {
+    active:   it => it['進度'] !== '完成',
+    done:     it => it['進度'] === '完成' && !it['請款單狀態'] && it['收款狀態'] !== '已收款',
+    invoiced: it => it['進度'] === '完成' && it['請款單狀態'] === '已開單' && it['收款狀態'] !== '已收款',
+    paid:     it => it['收款狀態'] === '已收款',
+  };
+  const filterFn = section && sectionFilter[section] ? sectionFilter[section] : () => true;
+  const its = state.items.filter(it => it['客戶'] === name && filterFn(it));
   const subtotal = its.reduce((s, it) => s + Number(it['金額'] || 0), 0);
 
   const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-600', '完成': 'bg-green-600' };
 
-  // 依進度狀態排序：進行中在前，完工在後
   const sorted = [...its].sort((a, b) => {
     const order = { '待施工': 0, '施工中': 1, '完成': 2 };
     return (order[a['進度']] || 0) - (order[b['進度']] || 0);
@@ -354,13 +368,13 @@ function renderCustomerDetail() {
           ${it['請款單狀態'] === '已開單' ? `<div class="text-xs text-blue-400 mb-1">請款單已開</div>` : ''}
           <div class="flex items-center gap-2 flex-wrap mt-1">
             <select onchange="cycleProgress('${it['工作ID']}',this.value)"
-              class="${color} text-white text-xs px-2 py-1 rounded-full font-semibold border-0 outline-none cursor-pointer">
+              class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
               <option value="待施工" ${prog==='待施工'?'selected':''}>待施工</option>
               <option value="施工中" ${prog==='施工中'?'selected':''}>施工中</option>
               <option value="完成"   ${prog==='完成'?'selected':''}>完成</option>
             </select>
             <select onchange="updateItemField('${it['工作ID']}','收款狀態',this.value)"
-              class="${payColor} text-white text-xs px-2 py-1 rounded-full font-semibold border-0 outline-none cursor-pointer">
+              class="${payColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
               <option value="未收款" ${(it['收款狀態']||'未收款')==='未收款'?'selected':''}>未收款</option>
               <option value="已收款" ${it['收款狀態']==='已收款'?'selected':''}>已收款</option>
             </select>
