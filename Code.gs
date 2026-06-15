@@ -404,7 +404,7 @@ function migrateToWorkItems() {
     return;
   }
 
-  const orderRows   = orderSheet.getDataRange().getValues();
+  const orderRows    = orderSheet.getDataRange().getValues();
   const orderHeaders = orderRows[0];
   const orders = {};
   for (let i = 1; i < orderRows.length; i++) {
@@ -415,27 +415,27 @@ function migrateToWorkItems() {
 
   const itemRows    = itemSheet.getDataRange().getValues();
   const itemHeaders = itemRows[0];
-  let count = 0;
+
+  // 一次組好所有列，最後一次寫入（大幅提速）
+  const allRows = [];
+  const ts = Date.now();
 
   for (let i = 1; i < itemRows.length; i++) {
     const it = {};
     itemHeaders.forEach((h, ci) => { it[h] = itemRows[i][ci]; });
     const o = orders[String(it['訂單編號'])] || {};
 
-    // 進度對應：舊品項無進度欄位時預設「待施工」；若訂單狀態=完工交貨則設「完成」
     let 進度 = it['進度'] || '';
     if (!進度) 進度 = (o['狀態'] === '完工交貨') ? '完成' : '待施工';
 
-    // 完工日期
     const 完工日期 = (進度 === '完成' && o['完工日期']) ? formatDateGs(o['完工日期']) : '';
 
-    // 收款狀態：從訂單繼承
     let 收款狀態 = o['收款狀態'] || '未收款';
-    if (收款狀態 === '收款訂金') 收款狀態 = '未收款'; // 訂金視為未收款
+    if (收款狀態 === '收款訂金') 收款狀態 = '未收款';
 
-    const row = HEADERS.map(h => {
+    allRows.push(HEADERS.map(h => {
       switch(h) {
-        case '工作ID':     return 'W' + (Date.now() + count).toString() + i;
+        case '工作ID':     return 'W' + (ts + i).toString();
         case '訂單編號':   return it['訂單編號'] || '';
         case '客戶':       return o['客戶'] || '';
         case '開單日期':   return o['開單日期'] ? formatDateGs(o['開單日期']) : '';
@@ -455,13 +455,15 @@ function migrateToWorkItems() {
         case '請款單狀態': return '';
         default: return '';
       }
-    });
-    wiSheet.appendRow(row);
-    count++;
-    Utilities.sleep(50); // 避免超過配額
+    }));
   }
 
-  SpreadsheetApp.getUi().alert(`搬移完成！共轉入 ${count} 筆工作項目。`);
+  // 一次性批次寫入
+  if (allRows.length > 0) {
+    wiSheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows);
+  }
+
+  SpreadsheetApp.getUi().alert(`搬移完成！共轉入 ${allRows.length} 筆工作項目。`);
 }
 
 function formatDateGs(v) {
