@@ -369,23 +369,16 @@ function renderCustomerDetail() {
     </div>`;
   }).join('');
 
-  // 底部按鈕：done 區塊才顯示「開請款單」（生產工單移到各品項編輯面板內）
+  // 底部按鈕：done 區塊才顯示「開請款單」（同客戶全部合併一張）
   const isDone = state.viewSection === 'done';
   let actionBtns = '';
-  if (isDone) {
-    const batches = {};
-    its.forEach(it => {
-      const b = it['訂單編號'] || '(無)';
-      if (!batches[b]) batches[b] = [];
-      batches[b].push(it['工作ID']);
-    });
-    actionBtns = Object.entries(batches).map(([bNo, ids]) => {
-      const idsArg = "[" + ids.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
-      return `<button class="btn btn-primary text-sm mt-1 w-full"
-        onclick="openInvoice(${idsArg})">
-        開請款單 ${bNo}（${ids.length} 件）
-      </button>`;
-    }).join('');
+  if (isDone && its.length > 0) {
+    const allIds = its.map(it => it['工作ID']);
+    const idsArg = "[" + allIds.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
+    actionBtns = `<button class="btn btn-primary text-sm mt-1 w-full"
+      onclick="openInvoice(${idsArg})">
+      開請款單（${allIds.length} 件）
+    </button>`;
   }
 
   return `
