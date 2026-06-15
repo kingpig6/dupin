@@ -763,28 +763,31 @@ async function saveNewItems() {
   if (!toSave.length) { showToast('請至少填一個品名'); return; }
 
   const orderNo = generateOrderNo();
+  const base = Date.now();
+  const payloadRows = toSave.map((t, i) => ({
+    '工作ID':     'W' + (base + i).toString(),
+    '訂單編號':   orderNo,
+    '客戶':       customer,
+    '開單日期':   openDate,
+    '進度':       '待施工',
+    '完工日期':   '',
+    '收款狀態':   '未收款',
+    '完工照片':   '',
+    '請款單狀態': '',
+    ...t,
+  }));
+
   showLoading(true);
+  const r = await api('addBatch', '工作項目', { rows: payloadRows });
+  showLoading(false);
+  if (r.error) { showToast('建立失敗：' + r.error, 'error'); return; }
 
-  for (let i = 0; i < toSave.length; i++) {
-    const item = {
-      '工作ID':     'W' + (Date.now() + i).toString(),
-      '訂單編號':   orderNo,
-      '客戶':       customer,
-      '開單日期':   openDate,
-      '進度':       '待施工',
-      '完工日期':   '',
-      '收款狀態':   '未收款',
-      '完工照片':   '',
-      '請款單狀態': '',
-      ...toSave[i],
-    };
-    await api('add', '工作項目', { data: item });
-  }
-
+  // 樂觀更新本地狀態，免去重新抓全部資料
+  state.items.push(...payloadRows);
+  saveCache();
   itemRowCount = 1;
-  await loadAll();
   showView('orders');
-  showToast(`已建立 ${toSave.length} 件工作項目 ✓`);
+  showToast(`已建立 ${payloadRows.length} 件工作項目 ✓`);
 }
 
 // ── 語音開單 ────────────────────────────────

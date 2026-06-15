@@ -41,6 +41,7 @@ function handleRequest(e) {
     switch (action) {
       case 'getAll':          result = getAll(sheet); break;
       case 'add':             result = addRow(sheet, body.data); break;
+      case 'addBatch':        result = addRows(sheet, body.rows); break;
       case 'update':          result = updateRow(sheet, body.key, body.data); break;
       case 'delete':          result = deleteRow(sheet, body.key); break;
       case 'getSettings':     result = getSettings(); break;
@@ -85,6 +86,19 @@ function addRow(sheetName, data) {
   const row = headers.map(h => data[h] !== undefined ? data[h] : '');
   sheet.appendRow(row);
   return { success: true };
+}
+
+// ── 通用：一次寫入多列（單次 setValues，速度遠快於逐筆 appendRow）──
+function addRows(sheetName, rowsData) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return { error: '工作表不存在：' + sheetName };
+  if (!rowsData || !rowsData.length) return { success: true, count: 0 };
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const matrix = rowsData.map(data =>
+    headers.map(h => data[h] !== undefined ? data[h] : '')
+  );
+  sheet.getRange(sheet.getLastRow() + 1, 1, matrix.length, headers.length).setValues(matrix);
+  return { success: true, count: matrix.length };
 }
 
 // ── 通用：更新一列（以第一欄主鍵比對）───────
