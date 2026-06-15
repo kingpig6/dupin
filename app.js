@@ -249,12 +249,12 @@ function renderOrdersContent() {
 
   const customerCard = (customer, items, section) => {
     const total  = items.reduce((s, it) => s + Number(it['金額'] || 0), 0);
-    const badges = items.slice(0, 4).map(it => `
+    const badges = items.slice(0, 8).map(it => `
       <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-200">
         ${it['品名'] || '-'}
         <span class="w-1.5 h-1.5 rounded-full ${progColor[it['進度']] || 'bg-gray-500'}"></span>
       </span>`).join('');
-    const more = items.length > 4 ? `<span class="text-xs text-gray-500">+${items.length - 4}</span>` : '';
+    const more = items.length > 8 ? `<span class="text-xs text-gray-500">+${items.length - 8}</span>` : '';
 
     return `
     <div class="card cursor-pointer" onclick="openCustomer('${customer.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${section}')">
