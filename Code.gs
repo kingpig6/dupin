@@ -400,7 +400,7 @@ function migrateToWorkItems() {
   const orderSheet = ss.getSheetByName('訂單');
   const itemSheet  = ss.getSheetByName('品項');
   if (!orderSheet || !itemSheet) {
-    SpreadsheetApp.getUi().alert('找不到「訂單」或「品項」工作表，請確認名稱正確。');
+    Logger.log('找不到「訂單」或「品項」工作表，請確認名稱正確。');
     return;
   }
 
@@ -463,7 +463,8 @@ function migrateToWorkItems() {
     wiSheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows);
   }
 
-  SpreadsheetApp.getUi().alert(`搬移完成！共轉入 ${allRows.length} 筆工作項目。`);
+  Logger.log(`搬移完成！共轉入 ${allRows.length} 筆工作項目。`);
+  return `搬移完成！共轉入 ${allRows.length} 筆工作項目。`;
 }
 
 function formatDateGs(v) {
