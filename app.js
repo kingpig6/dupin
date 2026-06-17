@@ -1283,6 +1283,17 @@ function showLoginGate(msg) {
 
 async function handleCredentialResponse(response) {
   auth.idToken = response.credential;
+  // 前端解碼 token（除錯用），確認 aud / email 是否正確
+  try {
+    const payload = JSON.parse(atob(response.credential.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    console.log('🔍 Token 內容:', {
+      aud: payload.aud,
+      設定的ClientID: GOOGLE_CLIENT_ID,
+      aud相符: payload.aud === GOOGLE_CLIENT_ID,
+      email: payload.email,
+      email_verified: payload.email_verified
+    });
+  } catch (e) { console.log('Token 解碼失敗', e); }
   const r = await api('verifyLogin', null, {});
   console.log('🔑 verifyLogin 回應:', JSON.stringify(r, null, 2));
   if (r && r.success) {
