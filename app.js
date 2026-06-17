@@ -73,6 +73,7 @@ function saveCache() {
       items: state.items,
       customers: state.customers,
       settings: state.settings,
+      workers: state.workers,
       ts: Date.now(),
     }));
   } catch(e) {}
@@ -86,6 +87,7 @@ function loadCache() {
     state.items     = cache.items     || [];
     state.customers = cache.customers || [];
     state.settings  = cache.settings  || {};
+    state.workers   = cache.workers   || [];
     return true;
   } catch(e) { return false; }
 }
