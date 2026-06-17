@@ -648,6 +648,7 @@ async function deleteItemPhoto(itemId, idx) {
 // ── 批量收款 ──────────────────────────────────
 async function batchMarkPaid(itemIds) {
   if (!confirm(`確定將 ${itemIds.length} 件工作項目標記為「已收款」？`)) return;
+  if (!confirm(`再次確認：${itemIds.length} 件全部標記已收款，此操作無法批量還原。`)) return;
   itemIds.forEach(id => {
     const it = state.items.find(x => String(x['工作ID']) === String(id));
     if (it) it['收款狀態'] = '已收款';
