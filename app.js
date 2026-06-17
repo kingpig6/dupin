@@ -1088,8 +1088,32 @@ function renderStats() {
     <button class="btn btn-primary w-full" onclick="queryStats()">查詢</button>
   </div>
   <div id="statsResult"></div>
-  <div class="section-title mt-4">各客戶累計</div>
-  <div id="statsByCustomer">${renderStatsByCustomer()}</div>`;
+
+  <div class="flex items-center justify-between cursor-pointer py-2 mt-2" onclick="toggleStatsCus()">
+    <span class="section-title mb-0">各客戶累計</span>
+    <span id="arrow-statsCus" class="text-gray-400 text-lg">▼</span>
+  </div>
+  <div id="statsByCustomer" class="hidden">${renderStatsByCustomer()}</div>
+
+  <div class="flex items-center justify-between cursor-pointer py-2 mt-2" onclick="toggleStatsWorker()">
+    <span class="section-title mb-0">施工人員業績</span>
+    <span id="arrow-statsWorker" class="text-gray-400 text-lg">▼</span>
+  </div>
+  <div id="statsByWorker" class="hidden">${renderStatsByWorker()}</div>`;
+}
+
+function toggleStatsCus() {
+  const el = document.getElementById('statsByCustomer');
+  const ar = document.getElementById('arrow-statsCus');
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+}
+
+function toggleStatsWorker() {
+  const el = document.getElementById('statsByWorker');
+  const ar = document.getElementById('arrow-statsWorker');
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
 }
 
 function renderStatsByCustomer() {
@@ -1105,6 +1129,27 @@ function renderStatsByCustomer() {
         <span>${name}</span>
         <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
       </div>`).join('') || '<p class="text-gray-500 text-sm">無資料</p>';
+}
+
+function renderStatsByWorker() {
+  const map = {};
+  state.items.filter(it => it['進度'] === '完成').forEach(it => {
+    const w = it['負責師傅'] || '(未指定)';
+    if (!map[w]) map[w] = { count: 0, total: 0 };
+    map[w].count++;
+    map[w].total += Number(it['金額'] || 0);
+  });
+  if (!Object.keys(map).length) return '<p class="text-gray-500 text-sm mb-4">無完工資料</p>';
+  return Object.entries(map)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([name, s]) => `
+      <div class="card flex justify-between items-center">
+        <div>
+          <div class="font-semibold">${name}</div>
+          <div class="text-xs text-gray-400">完工 ${s.count} 件</div>
+        </div>
+        <span class="text-amber-400 font-bold">$${s.total.toLocaleString()}</span>
+      </div>`).join('');
 }
 
 function queryStats() {
