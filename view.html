@@ -93,11 +93,18 @@ async function load() {
     `).join('');
   }
 
+  const doneTotal = doneItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+
   document.getElementById('app').innerHTML = `
     <div class="section-title">進行中（${activeItems.length}）</div>
     ${renderItems(activeItems)}
     <div class="section-title">完工待收款（${doneItems.length}）</div>
     ${renderItems(doneItems)}
+    ${doneItems.length ? `
+    <div style="border-top:1px solid #374151;margin-top:4px;padding-top:12px;text-align:right;">
+      <span class="text-gray-400 text-sm">應收總金額：</span>
+      <span class="text-amber-400 font-bold text-lg">$${doneTotal.toLocaleString()}</span>
+    </div>` : ''}
     <div class="text-center text-xs text-gray-600 mt-8">獨品工坊客製彩繪 · 僅供訂單查詢</div>
   `;
 }
