@@ -1093,13 +1093,13 @@ function renderStats() {
     <span class="section-title mb-0">各客戶累計</span>
     <span id="arrow-statsCus" class="text-gray-400 text-lg">▼</span>
   </div>
-  <div id="statsByCustomer" class="hidden">${renderStatsByCustomer()}</div>
+  <div id="statsByCustomer" class="hidden"></div>
 
   <div class="flex items-center justify-between cursor-pointer py-2 mt-2" onclick="toggleStatsWorker()">
     <span class="section-title mb-0">施工人員業績</span>
     <span id="arrow-statsWorker" class="text-gray-400 text-lg">▼</span>
   </div>
-  <div id="statsByWorker" class="hidden">${renderStatsByWorker()}</div>`;
+  <div id="statsByWorker" class="hidden"></div>`;
 }
 
 function toggleStatsCus() {
@@ -1107,6 +1107,10 @@ function toggleStatsCus() {
   const ar = document.getElementById('arrow-statsCus');
   el.classList.toggle('hidden');
   ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) {
+    const { from, to } = getStatsFilter();
+    el.innerHTML = renderStatsByCustomer(from, to);
+  }
 }
 
 function toggleStatsWorker() {
@@ -1114,11 +1118,15 @@ function toggleStatsWorker() {
   const ar = document.getElementById('arrow-statsWorker');
   el.classList.toggle('hidden');
   ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) {
+    const { from, to } = getStatsFilter();
+    el.innerHTML = renderStatsByWorker(from, to);
+  }
 }
 
-function renderStatsByCustomer() {
+function renderStatsByCustomer(from, to) {
   const map = {};
-  state.items.forEach(it => {
+  state.items.filter(it => !from || (it['開單日期'] >= from && it['開單日期'] <= to)).forEach(it => {
     const c = it['客戶'] || '(未知)';
     map[c] = (map[c] || 0) + Number(it['金額'] || 0);
   });
@@ -1131,9 +1139,9 @@ function renderStatsByCustomer() {
       </div>`).join('') || '<p class="text-gray-500 text-sm">無資料</p>';
 }
 
-function renderStatsByWorker() {
+function renderStatsByWorker(from, to) {
   const map = {};
-  state.items.filter(it => it['進度'] === '完成').forEach(it => {
+  state.items.filter(it => it['進度'] === '完成' && (!from || (it['完工日期'] >= from && it['完工日期'] <= to))).forEach(it => {
     const w = it['負責師傅'] || '(未指定)';
     if (!map[w]) map[w] = { count: 0, total: 0 };
     map[w].count++;
@@ -1152,10 +1160,15 @@ function renderStatsByWorker() {
       </div>`).join('');
 }
 
-function queryStats() {
+function getStatsFilter() {
   const from = document.getElementById('s_from').value;
   const to   = document.getElementById('s_to').value;
   const cus  = document.getElementById('s_cus').value;
+  return { from, to, cus };
+}
+
+function queryStats() {
+  const { from, to, cus } = getStatsFilter();
 
   const filtered = state.items.filter(it => {
     const d = it['開單日期'];
@@ -1178,6 +1191,12 @@ function queryStats() {
       </div>
       ${detail || '<p class="text-gray-500 text-sm">無符合資料</p>'}
     </div>`;
+
+  // 同步更新各客戶累計與施工人員業績（若已展開）
+  const cuEl = document.getElementById('statsByCustomer');
+  if (cuEl && !cuEl.classList.contains('hidden')) cuEl.innerHTML = renderStatsByCustomer(from, to);
+  const wkEl = document.getElementById('statsByWorker');
+  if (wkEl && !wkEl.classList.contains('hidden')) wkEl.innerHTML = renderStatsByWorker(from, to);
 }
 
 // ── 工具函式 ────────────────────────────────
