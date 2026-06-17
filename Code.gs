@@ -127,8 +127,8 @@ function verifyIdToken(idToken) {
     if (resp.getResponseCode() !== 200) return null;
     const info = JSON.parse(resp.getContentText());
 
-    const clientId = PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID');
-    if (clientId && info.aud !== clientId) return null;
+    const clientId = (PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID') || '').trim();
+    if (clientId && String(info.aud || '').trim() !== clientId) return null;
     if (info.exp && Number(info.exp) * 1000 < Date.now()) return null;
     if (info.email_verified === false || info.email_verified === 'false') return null;
 
