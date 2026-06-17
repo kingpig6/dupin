@@ -708,29 +708,33 @@ function renderNewOrder() {
   <div class="flex flex-col gap-3">
 
     <div class="card bg-gray-800 border border-gray-600">
-      <div class="flex items-center justify-between mb-2">
+      <button type="button" onclick="this.nextElementSibling.classList.toggle('hidden')" class="w-full flex items-center justify-between">
         <span class="section-title mb-0">語音開單</span>
-        <span class="text-xs text-gray-400">Android Chrome 適用</span>
-      </div>
-      <p class="text-xs text-gray-400 mb-3">按下麥克風，說出品項資訊，自動填入表單</p>
-      <div id="voiceResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
-      <button type="button" id="voiceBtn" onclick="startVoice()"
-        class="w-full py-3 rounded-lg font-bold text-white bg-blue-600 active:bg-blue-800 flex items-center justify-center gap-2">
-        <span id="voiceBtnIcon">●</span><span id="voiceBtnText">開始語音輸入</span>
+        <span class="text-xs text-gray-400">Android Chrome 適用 ▼</span>
       </button>
+      <div class="hidden mt-3">
+        <p class="text-xs text-gray-400 mb-3">按下麥克風，說出品項資訊，自動填入表單</p>
+        <div id="voiceResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
+        <button type="button" id="voiceBtn" onclick="startVoice()"
+          class="w-full py-3 rounded-lg font-bold text-white bg-blue-600 active:bg-blue-800 flex items-center justify-center gap-2">
+          <span id="voiceBtnIcon">●</span><span id="voiceBtnText">開始語音輸入</span>
+        </button>
+      </div>
     </div>
 
     <div class="card bg-gray-800 border border-gray-600">
-      <div class="flex items-center justify-between mb-2">
+      <button type="button" onclick="this.nextElementSibling.classList.toggle('hidden')" class="w-full flex items-center justify-between">
         <span class="section-title mb-0">圖片開單</span>
-        <span class="text-xs text-gray-400">AI 辨識截圖/照片</span>
+        <span class="text-xs text-gray-400">AI 辨識截圖/照片 ▼</span>
+      </button>
+      <div class="hidden mt-3">
+        <p class="text-xs text-gray-400 mb-3">上傳 LINE 截圖或訂單照片，自動解析品名、規格、備註等</p>
+        <div id="imgResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
+        <label class="w-full py-3 rounded-lg font-bold text-white bg-purple-700 active:bg-purple-900 flex items-center justify-center gap-2 cursor-pointer">
+          <span>📷 上傳圖片解析</span>
+          <input type="file" accept="image/*" class="hidden" onchange="parseImageOrder(this)">
+        </label>
       </div>
-      <p class="text-xs text-gray-400 mb-3">上傳 LINE 截圖或訂單照片，自動解析品名、規格、備註等</p>
-      <div id="imgResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
-      <label class="w-full py-3 rounded-lg font-bold text-white bg-purple-700 active:bg-purple-900 flex items-center justify-center gap-2 cursor-pointer">
-        <span>📷 上傳圖片解析</span>
-        <input type="file" accept="image/*" class="hidden" onchange="parseImageOrder(this)">
-      </label>
     </div>
 
     <div>
