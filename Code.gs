@@ -59,7 +59,7 @@ function handleRequest(e) {
 
     // 登入驗證專用 action：回傳角色
     if (action === 'verifyLogin') {
-      if (!user) return jsonOut({ error: 'TOKEN_INVALID' });
+      if (!user) return jsonOut({ error: 'TOKEN_INVALID', debug: debugTokenInfo(body.idToken) });
       const role = getUserRole(user.email);
       if (!role) return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
       return jsonOut({ success: true, email: user.email, name: role.name || user.name, role: role.role });
@@ -110,6 +110,33 @@ function jsonOut(obj) {
 }
 
 // ── 驗證 Google ID Token（含快取，減少延遲）──
+// ── 除錯用：回傳 tokeninfo 的實際內容與比對結果（上線後可移除）──
+function debugTokenInfo(idToken) {
+  try {
+    if (!idToken) return { reason: 'no idToken in request' };
+    const resp = UrlFetchApp.fetch(
+      'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken),
+      { muteHttpExceptions: true }
+    );
+    const code = resp.getResponseCode();
+    const info = JSON.parse(resp.getContentText() || '{}');
+    const clientId = (PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID') || '').trim();
+    return {
+      httpCode: code,
+      aud: info.aud || null,
+      configuredClientId: clientId,
+      audMatches: String(info.aud || '').trim() === clientId,
+      email: info.email || null,
+      email_verified: info.email_verified,
+      exp: info.exp || null,
+      expired: info.exp ? (Number(info.exp) * 1000 < Date.now()) : null,
+      rawError: info.error || info.error_description || null
+    };
+  } catch (e) {
+    return { reason: 'exception', message: String(e) };
+  }
+}
+
 function verifyIdToken(idToken) {
   if (!idToken) return null;
   try {
