@@ -1126,7 +1126,7 @@ function toggleStatsWorker() {
 
 function renderStatsByCustomer(from, to) {
   const map = {};
-  state.items.filter(it => !from || (it['開單日期'] >= from && it['開單日期'] <= to)).forEach(it => {
+  state.items.filter(it => !from || (it['完工日期'] && it['完工日期'] >= from && it['完工日期'] <= to)).forEach(it => {
     const c = it['客戶'] || '(未知)';
     map[c] = (map[c] || 0) + Number(it['金額'] || 0);
   });
@@ -1171,14 +1171,14 @@ function queryStats() {
   const { from, to, cus } = getStatsFilter();
 
   const filtered = state.items.filter(it => {
-    const d = it['開單日期'];
-    return d >= from && d <= to && (!cus || it['客戶'] === cus);
+    const d = it['完工日期'];
+    return d && d >= from && d <= to && (!cus || it['客戶'] === cus);
   });
 
   const total  = filtered.reduce((s, it) => s + Number(it['金額'] || 0), 0);
   const detail = filtered.map(it =>
     `<div class="flex justify-between text-sm py-1 border-b border-gray-700">
-      <span>${it['開單日期']} ${it['客戶']} · ${it['品名']||''}</span>
+      <span>${it['完工日期']} ${it['客戶']} · ${it['品名']||''}</span>
       <span>$${Number(it['金額']||0).toLocaleString()}</span>
     </div>`
   ).join('');
