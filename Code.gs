@@ -167,7 +167,7 @@ function getCustomerView(token) {
   let customers = [];
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][0]).trim() === String(token).trim()) {
-      customers = String(rows[i][1]).split(',').map(s => s.trim()).filter(Boolean);
+      customers = String(rows[i][1]).split(/[,，]/).map(s => s.trim()).filter(Boolean);
       break;
     }
   }
