@@ -92,6 +92,7 @@ function handleRequest(e) {
       case 'getPDFUrl':       result = getPDFUrl(body.itemId, body.type); break;
       case 'uploadItemPhoto': result = uploadItemPhoto(body.itemId, body.base64, body.fileName); break;
       case 'parseVoice':      result = parseVoiceWithAI(body.text, body.customers); break;
+      case 'parseImage':      result = parseImageWithAI(body.base64, body.customers); break;
       default:                result = { error: 'Unknown action: ' + action };
     }
 
@@ -847,6 +848,78 @@ function parseVoiceWithAI(text, customers) {
     const clean = json.content[0].text.replace(/```json\n?|\n?```/g, '').trim();
     const parsed = JSON.parse(clean);
     return { success: true, data: parsed };
+  } catch (e) {
+    return { error: 'JSON 解析失敗：' + json.content[0].text };
+  }
+}
+
+// ── Claude Vision 圖片開單解析 ───────────────
+function parseImageWithAI(base64, customers) {
+  const key = PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY');
+  if (!key) return { error: '未設定 CLAUDE_API_KEY' };
+
+  // 取出 MIME type 和純 base64 資料
+  const match = String(base64 || '').match(/^data:(.+?);base64,(.+)$/);
+  if (!match) return { error: '圖片格式錯誤' };
+  const mediaType = match[1];
+  const imageData = match[2];
+
+  const customerList = (customers || []).join('、') || '（無）';
+  const today = new Date().toISOString().slice(0, 10);
+
+  const prompt = `你是一個訂單助手，請從這張圖片（可能是 LINE 截圖、貨運單或訂單照片）中萃取工作項目資訊，回傳 JSON。
+
+現有客戶清單：${customerList}
+今天日期：${today}
+
+請回傳以下 JSON 格式（無法辨識的欄位留空字串）：
+{
+  "customer": "客戶名稱（從現有客戶清單中選，若無相符則填辨識到的名稱，若完全無法判斷則留空）",
+  "deadline": "交貨期限（YYYY-MM-DD，若提到日期如6/15請轉換，無法判斷則留空）",
+  "items": [
+    {
+      "name": "品名（如：烤漆鴨尾、白地圖L、客製化彩繪等）",
+      "spec": "規格（如：M/L、XL、白色等）",
+      "qty": 數量數字,
+      "price": 單價數字（若未提及則為0）,
+      "plate": "車號（若有）",
+      "worker": "負責師傅（若有）",
+      "note": "備註（完整保留客戶的特殊要求、交貨方式、寄件注意事項等，包含日期資訊）"
+    }
+  ]
+}
+
+只回傳 JSON，不要其他說明文字。`;
+
+  const response = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post',
+    headers: {
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json'
+    },
+    payload: JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageData } },
+          { type: 'text', text: prompt }
+        ]
+      }]
+    }),
+    muteHttpExceptions: true
+  });
+
+  const rawText = response.getContentText();
+  const json = JSON.parse(rawText);
+  if (json.error) return { error: json.error.type + ': ' + json.error.message };
+  if (!json.content || !json.content[0]) return { error: '空回應：' + rawText };
+
+  try {
+    const clean = json.content[0].text.replace(/```json\n?|\n?```/g, '').trim();
+    return { success: true, data: JSON.parse(clean) };
   } catch (e) {
     return { error: 'JSON 解析失敗：' + json.content[0].text };
   }

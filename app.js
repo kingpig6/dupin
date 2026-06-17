@@ -721,6 +721,19 @@ function renderNewOrder() {
       </button>
     </div>
 
+    <div class="card bg-gray-800 border border-gray-600">
+      <div class="flex items-center justify-between mb-2">
+        <span class="section-title mb-0">圖片開單</span>
+        <span class="text-xs text-gray-400">AI 辨識截圖/照片</span>
+      </div>
+      <p class="text-xs text-gray-400 mb-3">上傳 LINE 截圖或訂單照片，自動解析品名、規格、備註等</p>
+      <div id="imgResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
+      <label class="w-full py-3 rounded-lg font-bold text-white bg-purple-700 active:bg-purple-900 flex items-center justify-center gap-2 cursor-pointer">
+        <span>📷 上傳圖片解析</span>
+        <input type="file" accept="image/*" class="hidden" onchange="parseImageOrder(this)">
+      </label>
+    </div>
+
     <div>
       <div class="flex items-center justify-between mb-1">
         <label class="section-title mb-0">客戶</label>
@@ -1042,6 +1055,70 @@ async function parseVoiceWithAI(text) {
 
   if (resultEl) resultEl.textContent = '✓ AI 解析完成，請確認後送出';
   showToast('AI 解析完成 ✓');
+}
+
+// ── 圖片開單 ─────────────────────────────────
+async function parseImageOrder(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const resultEl = document.getElementById('imgResult');
+  if (resultEl) resultEl.textContent = '⏳ 上傳中…';
+
+  // 轉 base64
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  if (resultEl) resultEl.textContent = '⏳ AI 辨識中…';
+  const customerNames = state.customers.map(c => c['客戶名稱']);
+  const res = await api('parseImage', null, { base64, customers: customerNames });
+
+  if (!res.success || !res.data) {
+    if (resultEl) resultEl.textContent = 'AI 解析失敗：' + (res.error || 'unknown');
+    showToast('圖片解析失敗');
+    return;
+  }
+
+  const d = res.data;
+  if (d.customer) {
+    const cusEl = document.getElementById('o_cus');
+    if (cusEl) {
+      const opt = Array.from(cusEl.options).find(o => o.value === d.customer);
+      if (opt) cusEl.value = d.customer;
+    }
+  }
+  if (d.deadline) {
+    const dateEl = document.getElementById('o_date');
+    if (dateEl && d.deadline) dateEl.value = d.deadline;
+  }
+  if (d.items && d.items.length) {
+    const container = document.getElementById('itemRows');
+    if (container) {
+      container.innerHTML = '';
+      itemRowCount = 0;
+      d.items.forEach((item, idx) => {
+        const div = document.createElement('div');
+        div.innerHTML = renderItemRow(idx);
+        container.appendChild(div.firstElementChild);
+        itemRowCount++;
+        if (item.name)   document.getElementById(`r${idx}_name`).value     = item.name;
+        if (item.spec)   document.getElementById(`r${idx}_spec`).value     = item.spec;
+        if (item.qty)    document.getElementById(`r${idx}_qty`).value      = item.qty  || 1;
+        if (item.price)  document.getElementById(`r${idx}_price`).value    = item.price || '';
+        if (item.plate)  document.getElementById(`r${idx}_plate`).value    = item.plate || '';
+        if (item.worker) document.getElementById(`r${idx}_worker`).value   = item.worker || '';
+        if (item.note)   document.getElementById(`r${idx}_note`).value     = item.note  || '';
+        if (d.deadline)  document.getElementById(`r${idx}_deadline`).value = d.deadline;
+        calcRowAmount(idx);
+      });
+    }
+  }
+  if (resultEl) resultEl.textContent = '✓ 解析完成，請確認後送出';
+  showToast('圖片解析完成 ✓');
+  input.value = '';
 }
 
 // ── 客戶管理 ────────────────────────────────
