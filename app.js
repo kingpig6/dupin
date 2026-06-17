@@ -1269,7 +1269,10 @@ function showLoginGate(msg) {
       <p id="loginError" class="text-red-400 text-sm mt-4"></p>
     </div>`;
   if (window.google && google.accounts) {
-    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
+    if (!window._gsiInitialized) {
+      google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
+      window._gsiInitialized = true;
+    }
     google.accounts.id.renderButton(document.getElementById('gsiButton'),
       { theme: 'filled_blue', size: 'large', text: 'signin_with', shape: 'pill' });
   } else {
