@@ -103,12 +103,12 @@ async function loadAll() {
     api('getAll', '工作項目'),
     api('getAll', '客戶'),
     api('getSettings'),
-    api('getAll', '施工人員'),
+    api('getAll', '員工'),
   ]);
   if (wi.data) state.items     = wi.data.map(normalizeItem);
   if (c.data)  state.customers = c.data;
   if (s.data)  state.settings  = s.data;
-  if (w.data)  state.workers   = w.data.map(r => Object.values(r)[0] || '').filter(Boolean);
+  if (w.data)  state.workers   = w.data.map(r => r['姓名'] || '').filter(Boolean);
   saveCache();
   showLoading(false);
   render();
