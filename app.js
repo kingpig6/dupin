@@ -18,6 +18,7 @@ let state = {
   view: 'orders',
   items: [],          // 工作項目（扁平，單一表）
   customers: [],
+  workers: [],
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
   viewSection: null,  // 從哪個區塊進入（active/done/invoiced/paid）
@@ -82,14 +83,16 @@ async function loadAll() {
     showLoading(true);
   }
 
-  const [wi, c, s] = await Promise.all([
+  const [wi, c, s, w] = await Promise.all([
     api('getAll', '工作項目'),
     api('getAll', '客戶'),
     api('getSettings'),
+    api('getAll', '施工人員'),
   ]);
   if (wi.data) state.items     = wi.data.map(normalizeItem);
   if (c.data)  state.customers = c.data;
   if (s.data)  state.settings  = s.data;
+  if (w.data)  state.workers   = w.data.map(r => Object.values(r)[0] || '').filter(Boolean);
   saveCache();
   showLoading(false);
   render();
@@ -476,7 +479,10 @@ function editItem(id) {
       <input id="ei_price" value="${it['單價']||''}"       type="number" placeholder="單價"
         oninput="document.getElementById('ei_amt').textContent='$'+((document.getElementById('ei_qty').value||1)*this.value).toLocaleString()"/>
       <input id="ei_plate"  value="${it['車號']||''}"      placeholder="車號（選填）"/>
-      <input id="ei_worker" value="${it['負責師傅']||''}"  placeholder="負責師傅（選填）"/>
+      <select id="ei_worker">
+        <option value="">負責師傅（選填）</option>
+        ${state.workers.map(w => `<option value="${w}" ${it['負責師傅']===w?'selected':''}>${w}</option>`).join('')}
+      </select>
     </div>
     <div class="mb-2">
       <label class="section-title">交貨期限</label>
@@ -692,7 +698,10 @@ function renderItemRow(idx) {
     </div>
     <div class="grid grid-cols-2 gap-2 mb-2">
       <input placeholder="車號（選填）" id="r${idx}_plate"/>
-      <input placeholder="負責師傅（選填）" id="r${idx}_worker"/>
+      <select id="r${idx}_worker">
+        <option value="">負責師傅（選填）</option>
+        ${state.workers.map(w => `<option value="${w}">${w}</option>`).join('')}
+      </select>
     </div>
     <div class="mb-2">
       <label class="text-xs text-gray-400">交貨期限（選填）</label>
