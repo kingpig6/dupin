@@ -185,8 +185,8 @@ function getCustomerView(token) {
     const row = all[i];
     const rowObj = {};
     headers.forEach((h, ci) => { rowObj[h] = row[ci]; });
-    const cus = String(rowObj['客戶'] || '');
-    if (!customers.includes(cus)) continue;
+    const cus = String(rowObj['客戶'] || '').trim();
+    if (!customers.map(c => c.trim()).includes(cus)) continue;
     // 只回傳：進行中（進度≠完成）或 完工未收款（進度=完成 且 收款狀態≠已收款）
     const done = rowObj['進度'] === '完成';
     const paid = rowObj['收款狀態'] === '已收款';
