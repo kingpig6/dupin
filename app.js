@@ -1186,38 +1186,68 @@ function toggleStatsWorker() {
 
 function renderStatsByCustomer(from, to) {
   const map = {};
+  const itemsMap = {};
   state.items.filter(it => !from || (it['完工日期'] && it['完工日期'] >= from && it['完工日期'] <= to)).forEach(it => {
     const c = it['客戶'] || '(未知)';
     map[c] = (map[c] || 0) + Number(it['金額'] || 0);
+    if (!itemsMap[c]) itemsMap[c] = [];
+    itemsMap[c].push(it);
   });
   return Object.entries(map)
     .sort((a, b) => b[1] - a[1])
-    .map(([name, total]) => `
-      <div class="card flex justify-between">
-        <span>${name}</span>
-        <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
-      </div>`).join('') || '<p class="text-gray-500 text-sm">無資料</p>';
+    .map(([name, total], idx) => {
+      const rows = (itemsMap[name] || [])
+        .sort((a, b) => (b['完工日期']||'') > (a['完工日期']||'') ? 1 : -1)
+        .map(it => `<div class="flex justify-between text-sm py-1 border-b border-gray-700">
+          <span class="text-gray-300">${it['完工日期']||''} · ${it['品名']||''}</span>
+          <span class="text-amber-400">$${Number(it['金額']||0).toLocaleString()}</span>
+        </div>`).join('');
+      const detailId = `sc_detail_${idx}`;
+      return `
+      <div class="card mb-2">
+        <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
+          <span class="font-semibold">${name}</span>
+          <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
+        </div>
+        <div id="${detailId}" class="hidden mt-2">${rows}</div>
+      </div>`;
+    }).join('') || '<p class="text-gray-500 text-sm">無資料</p>';
 }
 
 function renderStatsByWorker(from, to) {
   const map = {};
+  const itemsMap = {};
   state.items.filter(it => it['進度'] === '完成' && (!from || (it['完工日期'] >= from && it['完工日期'] <= to))).forEach(it => {
     const w = it['負責師傅'] || '(未指定)';
     if (!map[w]) map[w] = { count: 0, total: 0 };
     map[w].count++;
     map[w].total += Number(it['金額'] || 0);
+    if (!itemsMap[w]) itemsMap[w] = [];
+    itemsMap[w].push(it);
   });
   if (!Object.keys(map).length) return '<p class="text-gray-500 text-sm mb-4">無完工資料</p>';
   return Object.entries(map)
     .sort((a, b) => b[1].total - a[1].total)
-    .map(([name, s]) => `
-      <div class="card flex justify-between items-center">
-        <div>
-          <div class="font-semibold">${name}</div>
-          <div class="text-xs text-gray-400">完工 ${s.count} 件</div>
+    .map(([name, s], idx) => {
+      const rows = (itemsMap[name] || [])
+        .sort((a, b) => (b['完工日期']||'') > (a['完工日期']||'') ? 1 : -1)
+        .map(it => `<div class="flex justify-between text-sm py-1 border-b border-gray-700">
+          <span class="text-gray-300">${it['完工日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
+          <span class="text-amber-400">$${Number(it['金額']||0).toLocaleString()}</span>
+        </div>`).join('');
+      const detailId = `sw_detail_${idx}`;
+      return `
+      <div class="card mb-2">
+        <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
+          <div>
+            <div class="font-semibold">${name}</div>
+            <div class="text-xs text-gray-400">完工 ${s.count} 件</div>
+          </div>
+          <span class="text-amber-400 font-bold">$${s.total.toLocaleString()}</span>
         </div>
-        <span class="text-amber-400 font-bold">$${s.total.toLocaleString()}</span>
-      </div>`).join('');
+        <div id="${detailId}" class="hidden mt-2">${rows}</div>
+      </div>`;
+    }).join('');
 }
 
 function getStatsFilter() {
