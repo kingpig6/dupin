@@ -320,8 +320,15 @@ function renderCustomerDetail() {
   const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-600', '完成': 'bg-green-600' };
 
   const sorted = [...its].sort((a, b) => {
-    const order = { '待施工': 0, '施工中': 1, '完成': 2 };
-    return (order[a['進度']] || 0) - (order[b['進度']] || 0);
+    // 完工區塊：按完工日期新到舊；其他：按開單日期新到舊
+    if (state.viewSection === 'done' || state.viewSection === 'invoiced' || state.viewSection === 'paid') {
+      const da = a['完工日期'] ? new Date(a['完工日期']) : new Date(0);
+      const db = b['完工日期'] ? new Date(b['完工日期']) : new Date(0);
+      return db - da;
+    }
+    const da = a['開單日期'] ? new Date(a['開單日期']) : new Date(0);
+    const db = b['開單日期'] ? new Date(b['開單日期']) : new Date(0);
+    return db - da;
   });
 
   const itemCards = sorted.map(it => {

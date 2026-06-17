@@ -18,6 +18,12 @@ const ss = SpreadsheetApp.openById(SHEET_ID);
 // 設定：鍵|值
 
 function doGet(e) {
+  // 客戶查詢頁面：有 token 參數就直接回傳 HTML
+  if (e.parameter && e.parameter.token && !e.parameter.action) {
+    return HtmlService.createHtmlOutput(buildCustomerViewHtml(e.parameter.token))
+      .setTitle('獨品工坊 · 訂單查詢')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
   return handleRequest(e);
 }
 
@@ -69,6 +75,86 @@ function handleRequest(e) {
       .createTextOutput(JSON.stringify({ error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// ── 客戶查詢頁面 HTML ────────────────────────
+function buildCustomerViewHtml(token) {
+  const data = getCustomerView(token);
+  if (data.error) {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>獨品工坊</title></head><body style="font-family:sans-serif;background:#111827;color:#f3f4f6;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+    <div style="text-align:center;color:#f87171;">${data.error === 'Invalid token' ? '連結無效或已過期' : data.error}</div>
+    </body></html>`;
+  }
+
+  const customers = data.customers;
+  const items = data.items;
+  const activeItems = items.filter(it => it['進度'] !== '完成');
+  const doneItems   = items.filter(it => it['進度'] === '完成');
+
+  const progColor = { '待施工': '#4b5563', '施工中': '#1d4ed8', '完成': '#15803d' };
+
+  function renderGroup(list) {
+    if (!list.length) return '<p style="color:#6b7280;font-size:13px;">暫無項目</p>';
+    const groups = {};
+    list.forEach(it => {
+      const c = it['客戶'] || '未知';
+      if (!groups[c]) groups[c] = [];
+      groups[c].push(it);
+    });
+    return Object.entries(groups).map(([cus, its]) => `
+      ${customers.length > 1 ? `<div style="color:#f59e0b;font-size:12px;font-weight:600;margin-bottom:6px;">${cus}</div>` : ''}
+      ${its.map(it => {
+        const prog = it['進度'] || '待施工';
+        const bg = progColor[prog] || '#4b5563';
+        const amt = Number(it['金額'] || 0);
+        return `<div style="background:#1f2937;border-radius:12px;padding:14px;margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:15px;">${it['品名']||'-'}${it['規格']?' · '+it['規格']:''}</div>
+              <div style="color:#9ca3af;font-size:12px;margin-top:3px;">${it['數量']} × $${Number(it['單價']).toLocaleString()}</div>
+              ${it['交貨期限']?`<div style="color:#9ca3af;font-size:12px;margin-top:2px;">預計交期：${it['交貨期限']}</div>`:''}
+              ${it['完工日期']?`<div style="color:#f59e0b;font-size:12px;margin-top:2px;">完工：${it['完工日期']}</div>`:''}
+              ${it['備註']?`<div style="color:#9ca3af;font-size:12px;margin-top:2px;">備註：${it['備註']}</div>`:''}
+              <div style="margin-top:8px;"><span style="background:${bg};color:#fff;font-size:11px;padding:2px 10px;border-radius:99px;font-weight:600;">${prog}</span></div>
+            </div>
+            ${amt?`<div style="color:#f59e0b;font-weight:700;margin-left:12px;white-space:nowrap;">$${amt.toLocaleString()}</div>`:''}
+          </div>
+        </div>`;
+      }).join('')}
+    `).join('');
+  }
+
+  return `<!DOCTYPE html>
+<html lang="zh-TW"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+<meta name="theme-color" content="#f59e0b">
+<title>獨品工坊 · ${customers.join('、')}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#111827;color:#f3f4f6;font-family:'Noto Sans TC',sans-serif;padding:20px 16px 40px;}
+  .header{display:flex;align-items:center;gap:12px;margin-bottom:24px;}
+  .logo{width:40px;height:40px;border-radius:10px;background:#f59e0b;display:flex;align-items:center;justify-content:center;color:#111827;font-weight:900;font-size:18px;flex-shrink:0;}
+  .section-label{font-size:11px;color:#6b7280;letter-spacing:1px;text-transform:uppercase;margin:20px 0 10px;}
+  .footer{text-align:center;font-size:11px;color:#374151;margin-top:24px;}
+</style>
+</head><body>
+<div style="max-width:480px;margin:0 auto;">
+  <div class="header">
+    <div class="logo">獨</div>
+    <div>
+      <div style="color:#f59e0b;font-weight:700;font-size:17px;">獨品工坊</div>
+      <div style="color:#6b7280;font-size:12px;">${customers.join('、')} · 訂單查詢</div>
+    </div>
+  </div>
+  <div class="section-label">進行中（${activeItems.length}）</div>
+  ${renderGroup(activeItems)}
+  <div class="section-label">完工待收款（${doneItems.length}）</div>
+  ${renderGroup(doneItems)}
+  <div class="footer">獨品工坊客製彩繪 · 僅供訂單查詢</div>
+</div>
+</body></html>`;
 }
 
 // ── 客戶查詢連結：用 token 取得指定客戶的進行中+完工未收款項目 ──
