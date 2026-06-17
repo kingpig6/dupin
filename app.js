@@ -1284,6 +1284,7 @@ function showLoginGate(msg) {
 async function handleCredentialResponse(response) {
   auth.idToken = response.credential;
   const r = await api('verifyLogin', null, {});
+  console.log('🔑 verifyLogin 回應:', JSON.stringify(r, null, 2));
   if (r && r.success) {
     auth.email = r.email; auth.name = r.name; auth.role = r.role;
     sessionStorage.setItem('dupin_auth', JSON.stringify(auth));
