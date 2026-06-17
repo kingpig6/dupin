@@ -499,6 +499,9 @@ function editItem(id) {
   const batchArg = "[" + batchIds.map(bid => "'" + String(bid).replace(/'/g, "\\'") + "'").join(",") + "]";
   card.innerHTML = `
     <div class="grid grid-cols-2 gap-2 mb-2">
+      <select id="ei_customer" class="col-span-2">
+        ${state.customers.map(c => `<option value="${c['客戶名稱']||''}" ${it['客戶']===(c['客戶名稱']||'')?'selected':''}>${c['客戶名稱']||''}</option>`).join('')}
+      </select>
       <input id="ei_name"  value="${it['品名']||''}"       placeholder="品名"/>
       <input id="ei_spec"  value="${it['規格']||''}"       placeholder="規格"/>
       <input id="ei_qty"   value="${it['數量']||1}"        type="number" placeholder="數量"
@@ -548,6 +551,7 @@ async function saveItem(id) {
   const qty   = Number(document.getElementById('ei_qty').value)   || 1;
   const price = Number(document.getElementById('ei_price').value) || 0;
   const data = {
+    '客戶':     document.getElementById('ei_customer').value,
     '品名':     document.getElementById('ei_name').value.trim(),
     '規格':     document.getElementById('ei_spec').value.trim(),
     '數量':     qty,
