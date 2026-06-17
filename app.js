@@ -5,6 +5,14 @@
 // ⚠️  部署 Apps Script 後，把網址貼到這裡
 const API_URL = 'https://script.google.com/macros/s/AKfycbxzHdJMopMPPYvozDfrnRq3BUtcEg0QaCcVWlQEnrkPh0txbJim-JU3-FR4X0A7VTmglA/exec';
 
+// ⚠️  建立 OAuth 用戶端 ID 後填入這裡即可啟用 Google 登入權限控管（留空則維持無登入模式）
+const GOOGLE_CLIENT_ID = '';
+
+// 登入後的使用者資訊
+let auth = { idToken: null, email: null, name: null, role: null };
+// 是否為管理員（未啟用登入時所有人視為管理員，維持舊行為）
+function isAdmin() { return !GOOGLE_CLIENT_ID || auth.role === 'admin'; }
+
 // ── PWA 註冊 ────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js')
@@ -31,6 +39,7 @@ let state = {
 const API_SECRET = 'dupin2026';
 async function api(action, sheet, extra = {}) {
   const payload = { action, sheet, secret: API_SECRET, ...extra };
+  if (auth.idToken) payload.idToken = auth.idToken;
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
@@ -38,7 +47,14 @@ async function api(action, sheet, extra = {}) {
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify(payload),
     });
-    return await res.json();
+    const data = await res.json();
+    // 登入逾期 / 權限不足的統一處理
+    if (data && data.error === 'LOGIN_REQUIRED' || (data && data.error === 'TOKEN_INVALID')) {
+      logout('登入已逾期，請重新登入');
+    } else if (data && data.error === 'FORBIDDEN') {
+      showToast('權限不足，此操作僅限管理員', 'error');
+    }
+    return data;
   } catch (e) {
     showToast('網路錯誤，請確認 API_URL 已設定', 'error');
     return { error: e.message };
@@ -146,6 +162,11 @@ function render() {
   const back    = document.getElementById('backBtn');
   const actions = document.getElementById('headerActions');
 
+  // 業績僅限管理員
+  const statsNav = document.querySelector('.nav-btn[data-view="stats"]');
+  if (statsNav) statsNav.style.display = isAdmin() ? '' : 'none';
+  if (state.view === 'stats' && !isAdmin()) state.view = 'orders';
+
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.classList.toggle('text-amber-400', btn.dataset.view === state.view);
     btn.classList.toggle('text-gray-400',  btn.dataset.view !== state.view);
@@ -155,7 +176,10 @@ function render() {
     case 'orders':
       title.textContent = '獨品工坊';
       back.classList.add('hidden');
-      actions.innerHTML = '';
+      actions.innerHTML = GOOGLE_CLIENT_ID && auth.email
+        ? `<button onclick="logout()" class="text-gray-400 text-xs flex items-center gap-1">
+             <span class="text-amber-400">${auth.name || auth.email}</span>登出</button>`
+        : '';
       app.innerHTML = renderOrders();
       break;
     case 'customerDetail': {
@@ -373,7 +397,7 @@ function renderCustomerDetail() {
         <div class="flex flex-col items-end gap-2 ml-3 shrink-0">
           <span class="text-amber-400 font-bold">$${Number(it['金額'] || 0).toLocaleString()}</span>
           <button onclick="editItem('${it['工作ID']}')" class="text-amber-400 text-sm">✎</button>
-          <button onclick="deleteItem('${it['工作ID']}')" class="text-amber-400 text-sm">✕</button>
+          ${isAdmin() ? `<button onclick="deleteItem('${it['工作ID']}')" class="text-amber-400 text-sm">✕</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -382,7 +406,7 @@ function renderCustomerDetail() {
   // 底部按鈕：done 區塊才顯示「開請款單」（同客戶全部合併一張）
   const isDone = state.viewSection === 'done';
   let actionBtns = '';
-  if (isDone && its.length > 0) {
+  if (isDone && its.length > 0 && isAdmin()) {
     const allIds = its.map(it => it['工作ID']);
     const idsArg = "[" + allIds.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
     actionBtns = `<button class="btn btn-primary text-sm mt-1 w-full"
@@ -1231,6 +1255,53 @@ function showToast(msg, type = 'success') {
   setTimeout(() => t.remove(), 2500);
 }
 
+// ── Google 登入 ─────────────────────────────
+function showLoginGate(msg) {
+  document.querySelector('nav.no-print')?.classList.add('hidden');
+  const header = document.querySelector('header.no-print');
+  if (header) header.querySelector('#headerActions').innerHTML = '';
+  document.getElementById('app').innerHTML = `
+    <div class="flex flex-col items-center justify-center" style="min-height:70vh;">
+      <div class="w-16 h-16 rounded-2xl bg-amber-400 flex items-center justify-center text-gray-900 font-black text-3xl mb-4">獨</div>
+      <h2 class="text-amber-400 font-bold text-xl mb-1">獨品工坊開單系統</h2>
+      <p class="text-gray-400 text-sm mb-6">${msg || '請使用授權的 Google 帳號登入'}</p>
+      <div id="gsiButton"></div>
+      <p id="loginError" class="text-red-400 text-sm mt-4"></p>
+    </div>`;
+  if (window.google && google.accounts) {
+    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
+    google.accounts.id.renderButton(document.getElementById('gsiButton'),
+      { theme: 'filled_blue', size: 'large', text: 'signin_with', shape: 'pill' });
+  } else {
+    // GIS 還沒載入完，稍候重試
+    setTimeout(() => showLoginGate(msg), 300);
+  }
+}
+
+async function handleCredentialResponse(response) {
+  auth.idToken = response.credential;
+  const r = await api('verifyLogin', null, {});
+  if (r && r.success) {
+    auth.email = r.email; auth.name = r.name; auth.role = r.role;
+    sessionStorage.setItem('dupin_auth', JSON.stringify(auth));
+    document.querySelector('nav.no-print')?.classList.remove('hidden');
+    loadAll();
+  } else {
+    auth = { idToken: null, email: null, name: null, role: null };
+    const el = document.getElementById('loginError');
+    if (el) el.textContent = r && r.error === 'NOT_ALLOWED'
+      ? `此帳號（${r.email}）未授權，請聯絡管理員加入員工名單`
+      : '登入失敗，請重試';
+  }
+}
+
+function logout(msg) {
+  auth = { idToken: null, email: null, name: null, role: null };
+  sessionStorage.removeItem('dupin_auth');
+  if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+  showLoginGate(msg);
+}
+
 // ── 初始化 ──────────────────────────────────
 if (API_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
   document.getElementById('app').innerHTML = `
@@ -1238,6 +1309,13 @@ if (API_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
       <h2 class="text-amber-400 font-bold text-lg mb-2">請先設定 API</h2>
       <p class="text-gray-400 text-sm">請依步驟部署 Apps Script，<br>再把網址填入 app.js 的 API_URL 變數。</p>
     </div>`;
+} else if (GOOGLE_CLIENT_ID) {
+  // 已啟用登入：嘗試還原 session，否則顯示登入畫面
+  const saved = sessionStorage.getItem('dupin_auth');
+  if (saved) {
+    try { auth = JSON.parse(saved); } catch (e) {}
+  }
+  if (auth.idToken) loadAll(); else showLoginGate();
 } else {
   loadAll();
 }
