@@ -111,6 +111,7 @@ async function loadAll() {
   if (c.data)  state.customers = c.data;
   if (s.data)  state.settings  = s.data;
   if (w.data)  state.workers   = w.data.map(r => r['姓名'] || '').filter(Boolean);
+  console.log('👷 員工 API 回傳:', JSON.stringify(w), '→ state.workers =', JSON.stringify(state.workers));
   saveCache();
   showLoading(false);
   render();
