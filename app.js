@@ -662,11 +662,18 @@ function renderNewOrder() {
     </div>
 
     <div>
-      <label class="section-title">客戶</label>
+      <div class="flex items-center justify-between mb-1">
+        <label class="section-title mb-0">客戶</label>
+        <button type="button" onclick="toggleAddCustomer()" class="text-amber-400 text-lg font-bold leading-none px-1">＋</button>
+      </div>
       <select id="o_cus">
         <option value="">-- 選擇客戶 --</option>
         ${cusOptions}
       </select>
+      <div id="addCusPanel" class="hidden mt-2 flex gap-2">
+        <input id="newCusName" placeholder="輸入新客戶名稱" class="flex-1"/>
+        <button type="button" onclick="confirmAddCustomer()" class="btn btn-primary text-sm px-3 shrink-0">確認</button>
+      </div>
     </div>
     <div>
       <label class="section-title">開單日期</label>
@@ -742,6 +749,43 @@ function generateOrderNo() {
     .map(it => it['訂單編號']))];
   const seq = String(existing.length + 1).padStart(2, '0');
   return `${today}-${seq}`;
+}
+
+function toggleAddCustomer() {
+  const panel = document.getElementById('addCusPanel');
+  panel.classList.toggle('hidden');
+  if (!panel.classList.contains('hidden')) {
+    document.getElementById('newCusName').focus();
+  }
+}
+
+async function confirmAddCustomer() {
+  const input = document.getElementById('newCusName');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+
+  // 樂觀加入本地
+  if (!state.customers.find(c => c['客戶名稱'] === name)) {
+    state.customers.push({ '客戶名稱': name });
+  }
+
+  // 更新下拉選單並選取
+  const sel = document.getElementById('o_cus');
+  if (!sel.querySelector(`option[value="${name}"]`)) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  sel.value = name;
+
+  // 收起面板
+  input.value = '';
+  document.getElementById('addCusPanel').classList.add('hidden');
+
+  // 寫入試算表
+  await api('add', '客戶', { data: { '客戶名稱': name } });
+  showToast(`已新增客戶：${name} ✓`);
 }
 
 async function saveNewItems() {
