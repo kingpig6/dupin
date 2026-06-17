@@ -1270,7 +1270,7 @@ function showLoginGate(msg) {
     </div>`;
   if (window.google && google.accounts) {
     if (!window._gsiInitialized) {
-      google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
+      google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse, auto_select: true });
       window._gsiInitialized = true;
     }
     google.accounts.id.renderButton(document.getElementById('gsiButton'),
@@ -1298,7 +1298,7 @@ async function handleCredentialResponse(response) {
   console.log('🔑 verifyLogin 回應:', JSON.stringify(r, null, 2));
   if (r && r.success) {
     auth.email = r.email; auth.name = r.name; auth.role = r.role;
-    sessionStorage.setItem('dupin_auth', JSON.stringify(auth));
+    localStorage.setItem('dupin_auth', JSON.stringify({ email: auth.email, name: auth.name, role: auth.role }));
     document.querySelector('nav.no-print')?.classList.remove('hidden');
     loadAll();
   } else {
@@ -1312,7 +1312,7 @@ async function handleCredentialResponse(response) {
 
 function logout(msg) {
   auth = { idToken: null, email: null, name: null, role: null };
-  sessionStorage.removeItem('dupin_auth');
+  localStorage.removeItem('dupin_auth');
   if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
   showLoginGate(msg);
 }
@@ -1325,12 +1325,34 @@ if (API_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
       <p class="text-gray-400 text-sm">請依步驟部署 Apps Script，<br>再把網址填入 app.js 的 API_URL 變數。</p>
     </div>`;
 } else if (GOOGLE_CLIENT_ID) {
-  // 已啟用登入：嘗試還原 session，否則顯示登入畫面
-  const saved = sessionStorage.getItem('dupin_auth');
+  // 嘗試從 localStorage 還原登入狀態（記住裝置）
+  const saved = localStorage.getItem('dupin_auth');
   if (saved) {
-    try { auth = JSON.parse(saved); } catch (e) {}
+    try {
+      const s = JSON.parse(saved);
+      auth.email = s.email; auth.name = s.name; auth.role = s.role;
+    } catch (e) {}
   }
-  if (auth.idToken) loadAll(); else showLoginGate();
+  if (auth.email) {
+    // 有記住的身分，先直接進入（Google One Tap 在背景靜默取得新 token）
+    loadAll();
+    // 背景靜默登入，更新 idToken 供後續寫入操作使用
+    window.addEventListener('load', () => {
+      if (window.google && google.accounts) {
+        if (!window._gsiInitialized) {
+          google.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback: handleCredentialResponse,
+            auto_select: true,
+          });
+          window._gsiInitialized = true;
+        }
+        google.accounts.id.prompt();
+      }
+    });
+  } else {
+    showLoginGate();
+  }
 } else {
   loadAll();
 }
