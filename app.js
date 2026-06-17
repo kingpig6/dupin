@@ -6,7 +6,7 @@
 const API_URL = 'https://script.google.com/macros/s/AKfycbxzHdJMopMPPYvozDfrnRq3BUtcEg0QaCcVWlQEnrkPh0txbJim-JU3-FR4X0A7VTmglA/exec';
 
 // ⚠️  建立 OAuth 用戶端 ID 後填入這裡即可啟用 Google 登入權限控管（留空則維持無登入模式）
-const GOOGLE_CLIENT_ID = '';
+const GOOGLE_CLIENT_ID = '1037907135545-vtb7eaqjbc5765ev01pgf76h4o4jjl32.apps.googleusercontent.com';
 
 // 登入後的使用者資訊
 let auth = { idToken: null, email: null, name: null, role: null };
