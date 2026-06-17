@@ -51,11 +51,39 @@ function handleRequest(e) {
       return ContentService.createTextOutput(JSON.stringify({ error: 'Unauthorized' })).setMimeType(ContentService.MimeType.JSON);
     }
 
+    // ── 身分驗證（Google 登入）──────────────────
+    // 若已設定 GOOGLE_CLIENT_ID 則啟用權限控管；未設定則維持舊行為
+    const clientId = PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID');
+    let user = null;
+    if (body.idToken) user = verifyIdToken(body.idToken);
+
+    // 登入驗證專用 action：回傳角色
+    if (action === 'verifyLogin') {
+      if (!user) return jsonOut({ error: 'TOKEN_INVALID' });
+      const role = getUserRole(user.email);
+      if (!role) return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
+      return jsonOut({ success: true, email: user.email, name: role.name || user.name, role: role.role });
+    }
+
+    // 啟用權限控管後：所有寫入/敏感操作需要有效登入與足夠權限
+    if (clientId) {
+      const roleInfo = user ? getUserRole(user.email) : null;
+      const role = roleInfo ? roleInfo.role : null;
+      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto'];
+      if (writeActions.indexOf(action) >= 0) {
+        if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
+        if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
+        // 僅 admin：刪除、開請款單
+        if (action === 'delete' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
+        if (action === 'generateInvoice' && body.type === 'invoice' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
+      }
+    }
+
     let result;
     switch (action) {
       case 'getAll':          result = getAll(sheet); break;
-      case 'add':             result = addRow(sheet, body.data); break;
-      case 'addBatch':        result = addRows(sheet, body.rows); break;
+      case 'add':             result = addRow(sheet, body.data, user); break;
+      case 'addBatch':        result = addRows(sheet, body.rows, user); break;
       case 'update':          result = updateRow(sheet, body.key, body.data); break;
       case 'delete':          result = deleteRow(sheet, body.key); break;
       case 'getSettings':     result = getSettings(); break;
@@ -75,6 +103,56 @@ function handleRequest(e) {
       .createTextOutput(JSON.stringify({ error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ── 驗證 Google ID Token（含快取，減少延遲）──
+function verifyIdToken(idToken) {
+  if (!idToken) return null;
+  try {
+    const cache = CacheService.getScriptCache();
+    const key = 'tok_' + Utilities.base64EncodeWebSafe(
+      Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken)
+    );
+    const cached = cache.get(key);
+    if (cached) return JSON.parse(cached);
+
+    const resp = UrlFetchApp.fetch(
+      'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken),
+      { muteHttpExceptions: true }
+    );
+    if (resp.getResponseCode() !== 200) return null;
+    const info = JSON.parse(resp.getContentText());
+
+    const clientId = PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID');
+    if (clientId && info.aud !== clientId) return null;
+    if (info.exp && Number(info.exp) * 1000 < Date.now()) return null;
+    if (info.email_verified === false || info.email_verified === 'false') return null;
+
+    const user = { email: String(info.email || '').toLowerCase(), name: info.name || '' };
+    if (!user.email) return null;
+    cache.put(key, JSON.stringify(user), 1800); // 快取 30 分鐘
+    return user;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ── 查員工角色（員工表：email | 姓名 | 角色）──
+function getUserRole(email) {
+  const sheet = ss.getSheetByName('員工');
+  if (!sheet) return null;
+  const rows = sheet.getDataRange().getValues();
+  const target = String(email || '').trim().toLowerCase();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]).trim().toLowerCase() === target) {
+      return { email: target, name: rows[i][1] || '', role: String(rows[i][2] || 'staff').trim() };
+    }
+  }
+  return null;
 }
 
 // ── 客戶查詢頁面 HTML ────────────────────────
@@ -215,23 +293,30 @@ function getAll(sheetName) {
 }
 
 // ── 通用：新增一列 ──────────────────────────
-function addRow(sheetName, data) {
+function addRow(sheetName, data, user) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return { error: '工作表不存在：' + sheetName };
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (user && headers.indexOf('建立者') >= 0 && !data['建立者']) {
+    data['建立者'] = user.name || user.email;
+  }
   const row = headers.map(h => data[h] !== undefined ? data[h] : '');
   sheet.appendRow(row);
   return { success: true };
 }
 
 // ── 通用：一次寫入多列（單次 setValues，速度遠快於逐筆 appendRow）──
-function addRows(sheetName, rowsData) {
+function addRows(sheetName, rowsData, user) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return { error: '工作表不存在：' + sheetName };
   if (!rowsData || !rowsData.length) return { success: true, count: 0 };
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const creator = user ? (user.name || user.email) : '';
   const matrix = rowsData.map(data =>
-    headers.map(h => data[h] !== undefined ? data[h] : '')
+    headers.map(h => {
+      if (h === '建立者' && creator && !data[h]) return creator;
+      return data[h] !== undefined ? data[h] : '';
+    })
   );
   sheet.getRange(sheet.getLastRow() + 1, 1, matrix.length, headers.length).setValues(matrix);
   return { success: true, count: matrix.length };
