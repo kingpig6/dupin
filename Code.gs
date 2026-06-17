@@ -109,28 +109,23 @@ function jsonOut(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// ── 驗證 Google ID Token（含快取，減少延遲）──
-// ── 除錯用：回傳 tokeninfo 的實際內容與比對結果（上線後可移除）──
+// ── 除錯用：本地解碼 JWT 並回傳比對結果（上線後可移除）──
 function debugTokenInfo(idToken) {
   try {
     if (!idToken) return { reason: 'no idToken in request' };
-    const resp = UrlFetchApp.fetch(
-      'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken),
-      { muteHttpExceptions: true }
-    );
-    const code = resp.getResponseCode();
-    const info = JSON.parse(resp.getContentText() || '{}');
+    const parts = String(idToken).split('.');
+    if (parts.length !== 3) return { reason: 'not a JWT', parts: parts.length };
+    const info = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[1])).getDataAsString());
     const clientId = (PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID') || '').trim();
     return {
-      httpCode: code,
+      iss: info.iss || null,
       aud: info.aud || null,
       configuredClientId: clientId,
       audMatches: String(info.aud || '').trim() === clientId,
       email: info.email || null,
       email_verified: info.email_verified,
       exp: info.exp || null,
-      expired: info.exp ? (Number(info.exp) * 1000 < Date.now()) : null,
-      rawError: info.error || info.error_description || null
+      expired: info.exp ? (Number(info.exp) * 1000 < Date.now()) : null
     };
   } catch (e) {
     return { reason: 'exception', message: String(e) };
@@ -140,28 +135,24 @@ function debugTokenInfo(idToken) {
 function verifyIdToken(idToken) {
   if (!idToken) return null;
   try {
-    const cache = CacheService.getScriptCache();
-    const key = 'tok_' + Utilities.base64EncodeWebSafe(
-      Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken)
-    );
-    const cached = cache.get(key);
-    if (cached) return JSON.parse(cached);
+    // 直接在 Apps Script 內部解碼 JWT payload（不需外部網路請求，穩定快速）
+    const parts = String(idToken).split('.');
+    if (parts.length !== 3) return null;
+    const json = Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[1])).getDataAsString();
+    const info = JSON.parse(json);
 
-    const resp = UrlFetchApp.fetch(
-      'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken),
-      { muteHttpExceptions: true }
-    );
-    if (resp.getResponseCode() !== 200) return null;
-    const info = JSON.parse(resp.getContentText());
-
+    // 驗證簽發者
+    if (info.iss !== 'https://accounts.google.com' && info.iss !== 'accounts.google.com') return null;
+    // 驗證 aud 是否為本系統的 Client ID
     const clientId = (PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID') || '').trim();
     if (clientId && String(info.aud || '').trim() !== clientId) return null;
+    // 驗證未過期
     if (info.exp && Number(info.exp) * 1000 < Date.now()) return null;
+    // 驗證 email 已驗證
     if (info.email_verified === false || info.email_verified === 'false') return null;
 
     const user = { email: String(info.email || '').toLowerCase(), name: info.name || '' };
     if (!user.email) return null;
-    cache.put(key, JSON.stringify(user), 1800); // 快取 30 分鐘
     return user;
   } catch (e) {
     return null;
