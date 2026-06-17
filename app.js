@@ -406,16 +406,28 @@ function renderCustomerDetail() {
     </div>`;
   }).join('');
 
-  // 底部按鈕：done 區塊才顯示「開請款單」（同客戶全部合併一張）
-  const isDone = state.viewSection === 'done';
+  // 底部按鈕：done 區塊顯示「開請款單」；done/invoiced 區塊顯示「批量收款」
+  const isDone     = state.viewSection === 'done';
+  const isInvoiced = state.viewSection === 'invoiced';
   let actionBtns = '';
   if (isDone && its.length > 0 && isAdmin()) {
     const allIds = its.map(it => it['工作ID']);
     const idsArg = "[" + allIds.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
-    actionBtns = `<button class="btn btn-primary text-sm mt-1 w-full"
+    actionBtns += `<button class="btn btn-primary text-sm mt-1 w-full"
       onclick="openInvoice(${idsArg})">
       開請款單（${allIds.length} 件）
     </button>`;
+  }
+  if ((isDone || isInvoiced) && its.length > 0) {
+    const unpaidIds = its.filter(it => it['收款狀態'] !== '已收款').map(it => it['工作ID']);
+    if (unpaidIds.length > 0) {
+      const idsArg = "[" + unpaidIds.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
+      actionBtns += `<button class="btn btn-ghost text-sm mt-2 w-full"
+        style="background:#166534;color:#fff;"
+        onclick="batchMarkPaid(${idsArg})">
+        ✓ 批量收款（${unpaidIds.length} 件）
+      </button>`;
+    }
   }
 
   return `
@@ -631,6 +643,23 @@ async function deleteItemPhoto(itemId, idx) {
   if (grid) grid.innerHTML = renderItemPhotoGrid(it['完工照片'], itemId);
   await api('update', '工作項目', { key: itemId, data: { '完工照片': it['完工照片'] } });
   saveCache();
+}
+
+// ── 批量收款 ──────────────────────────────────
+async function batchMarkPaid(itemIds) {
+  if (!confirm(`確定將 ${itemIds.length} 件工作項目標記為「已收款」？`)) return;
+  if (!confirm(`再次確認：${itemIds.length} 件全部標記已收款，此操作無法批量還原。`)) return;
+  itemIds.forEach(id => {
+    const it = state.items.find(x => String(x['工作ID']) === String(id));
+    if (it) it['收款狀態'] = '已收款';
+  });
+  showView('customerDetail', state.viewCustomer);
+  saveCache();
+  showToast(`正在更新 ${itemIds.length} 件...`);
+  await Promise.all(itemIds.map(id =>
+    api('update', '工作項目', { key: id, data: { '收款狀態': '已收款' } })
+  ));
+  showToast(`已收款完成（${itemIds.length} 件）`);
 }
 
 // ── PDF 操作 ─────────────────────────────────
