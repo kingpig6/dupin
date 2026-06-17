@@ -6,7 +6,7 @@
 const API_URL = 'https://script.google.com/macros/s/AKfycbxzHdJMopMPPYvozDfrnRq3BUtcEg0QaCcVWlQEnrkPh0txbJim-JU3-FR4X0A7VTmglA/exec';
 
 // ⚠️  建立 OAuth 用戶端 ID 後填入這裡即可啟用 Google 登入權限控管（留空則維持無登入模式）
-const GOOGLE_CLIENT_ID = '';
+const GOOGLE_CLIENT_ID = '1037907135545-vtb7eaqjbc5765ev01pgf76h4o4jjl32.apps.googleusercontent.com';
 
 // 登入後的使用者資訊
 let auth = { idToken: null, email: null, name: null, role: null };
@@ -103,12 +103,12 @@ async function loadAll() {
     api('getAll', '工作項目'),
     api('getAll', '客戶'),
     api('getSettings'),
-    api('getAll', '施工人員'),
+    api('getAll', '員工'),
   ]);
   if (wi.data) state.items     = wi.data.map(normalizeItem);
   if (c.data)  state.customers = c.data;
   if (s.data)  state.settings  = s.data;
-  if (w.data)  state.workers   = w.data.map(r => Object.values(r)[0] || '').filter(Boolean);
+  if (w.data)  state.workers   = w.data.map(r => r['姓名'] || '').filter(Boolean);
   saveCache();
   showLoading(false);
   render();
