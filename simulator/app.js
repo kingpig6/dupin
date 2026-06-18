@@ -80,9 +80,14 @@
       const label = `${c.name} ${c.code}`;
       const sw = document.createElement('button');
       sw.className = 'swatch';
-      sw.style.background = c.hex;
       sw.title = label;                       // 桌機滑鼠移上去顯示
-      sw.onclick = () => { applyColor(c.hex); showSwatchLabel(label); };
+      sw.innerHTML = `<span class="chip" style="background:${c.hex}"></span><span class="name">${c.name}</span>`;
+      sw.onclick = () => {
+        applyColor(c.hex);
+        showSwatchLabel(label);
+        wrap.querySelectorAll('.swatch').forEach((s) => s.classList.remove('active'));
+        sw.classList.add('active');
+      };
       wrap.appendChild(sw);
     });
   }
