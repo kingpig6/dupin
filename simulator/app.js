@@ -38,18 +38,26 @@
   /* ---------------- 部位熱點標記（帽體上的橘色按鈕） ---------------- */
   function buildPartTabs() {
     const wrap = $('hotspots');
-    wrap.innerHTML = '';
-    CONFIG.parts.forEach((p) => {
+    // 引線（SVG）：從帽體外的標籤拉細線指向帽體上的點
+    const lines = CONFIG.parts.map((p) => {
       const a = p.anchor || { x: 0.5, y: 0.5 };
-      const b = document.createElement('button');
-      b.className = 'hotspot';
-      b.dataset.key = p.key;
-      b.style.left = (a.x * 100) + '%';
-      b.style.top = (a.y * 100) + '%';
-      b.innerHTML = `<span class="dot"></span><span>${p.name}</span>`;
-      b.onclick = () => setActive(p.key);
-      wrap.appendChild(b);
-    });
+      const l = p.label || a;
+      return `<line data-key="${p.key}" x1="${l.x * 100}" y1="${l.y * 100}" x2="${a.x * 100}" y2="${a.y * 100}"/>`;
+    }).join('');
+    const svg = `<svg class="leaders" viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>`;
+    // 指向點的小圓點（落在帽體上）
+    const dots = CONFIG.parts.map((p) => {
+      const a = p.anchor || { x: 0.5, y: 0.5 };
+      return `<span class="hotspot-dot" data-key="${p.key}" style="left:${a.x * 100}%;top:${a.y * 100}%"></span>`;
+    }).join('');
+    // 橘色標籤（落在帽體外）
+    const pills = CONFIG.parts.map((p) => {
+      const l = p.label || p.anchor || { x: 0.5, y: 0.5 };
+      return `<button class="hotspot" data-key="${p.key}" style="left:${l.x * 100}%;top:${l.y * 100}%">${p.name}</button>`;
+    }).join('');
+    wrap.innerHTML = svg + dots + pills;
+    wrap.querySelectorAll('.hotspot').forEach((b) =>
+      b.onclick = () => setActive(b.dataset.key));
     highlightActiveTab();
   }
 
@@ -60,8 +68,8 @@
   }
 
   function highlightActiveTab() {
-    document.querySelectorAll('.hotspot').forEach((b) =>
-      b.classList.toggle('active', b.dataset.key === activeKey));
+    document.querySelectorAll('.hotspot, .hotspot-dot, .leaders line').forEach((el) =>
+      el.classList.toggle('active', el.dataset.key === activeKey));
   }
 
   /* ---------------- 調色盤 ---------------- */
