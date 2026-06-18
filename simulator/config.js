@@ -34,10 +34,18 @@ const CONFIG = {
       matteSrc: 'assets/b2.png', metalSrc: 'assets/c2.png' },
   ],
 
-  // 風格快選調色盤
+  // 風格快選調色盤（依色卡第 1～10：深黑 → 胡蘿蔔橘）
   palette: [
-    '#E53935', '#FB8C00', '#FDD835', '#43A047', '#1E88E5',
-    '#5E35B1', '#000000', '#FFFFFF', '#C0C0C0', '#B71C1C',
+    '#1C1C1C', // 1 Jet Black 深黑
+    '#6C7176', // 2 Charcoal Gray 炭灰
+    '#F1F4F5', // 3 Polar White 冰極白
+    '#AFD2EA', // 4 Baby Blue 寶寶藍
+    '#EFC4CF', // 5 Pastel Pink 粉紅
+    '#BCA9DC', // 6 Pastel Purple 粉紫
+    '#C21C26', // 7 Vibrant Red 鮮紅
+    '#21694A', // 8 Emerald Green 祖母綠
+    '#1E3A63', // 9 Midnight Blue 午夜藍
+    '#E8822F', // 10 Carrot Orange 胡蘿蔔橘
   ],
 
   // Apps Script 部署網址（部署後填入）
