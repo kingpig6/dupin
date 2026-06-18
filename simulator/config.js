@@ -31,10 +31,10 @@ const CONFIG = {
   parts: [
     { key: 'p1', name: '部件 1', z: 1, default: '#C0C0C0', material: 'matte',
       matteSrc: 'assets/b1.png', metalSrc: 'assets/c1.png',
-      anchor: { x: 0.40, y: 0.76 }, label: { x: 0.06, y: 0.60 } },
+      anchor: { x: 0.30, y: 0.76 }, label: { x: 0.06, y: 0.74 } },
     { key: 'p2', name: '部件 2', z: 2, default: '#1A1A1A', material: 'matte',
       matteSrc: 'assets/b2.png', metalSrc: 'assets/c2.png',
-      anchor: { x: 0.60, y: 0.30 }, label: { x: 0.95, y: 0.12 } },
+      anchor: { x: 0.68, y: 0.30 }, label: { x: 0.95, y: 0.12 } },
   ],
 
   // 風格快選調色盤（依色卡第 1～10：深黑 → 胡蘿蔔橘）
