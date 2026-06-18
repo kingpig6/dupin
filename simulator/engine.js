@@ -144,12 +144,19 @@ const Engine = (() => {
   /* ---------- 合成到主畫布 ---------- */
   function render() {
     mainCtx.clearRect(0, 0, W, H);
-    mainCtx.drawImage(images.base, 0, 0, W, H);            // 底圖
+    const z = CONFIG.zoom || 1;
+    mainCtx.save();
+    // 以畫布中心為基準放大帽體
+    mainCtx.translate(W / 2, H / 2);
+    mainCtx.scale(z, z);
+    mainCtx.translate(-W / 2, -H / 2);
+    mainCtx.drawImage(images.base, 0, 0, W, H);          // 底圖
     const ordered = [...CONFIG.parts].sort((a, b) => a.z - b.z);
     for (const part of ordered) {
       const layer = cache[part.key] || tintPart(part.key);
       mainCtx.drawImage(layer, 0, 0, W, H);
     }
+    mainCtx.restore();
   }
 
   // 改色 / 換材質 → 只重算該部位 → 重繪
@@ -168,12 +175,17 @@ const Engine = (() => {
 
   // 提供命中偵測：回傳點擊座標落在哪個部位（用該部位灰階 alpha 判斷，由上層往下找）
   function hitTest(px, py) {
+    // 反算 zoom：畫面點擊座標 → 未縮放的圖層座標
+    const z = CONFIG.zoom || 1;
+    const ix = Math.round(W / 2 + (px - W / 2) / z);
+    const iy = Math.round(H / 2 + (py - H / 2) / z);
+    if (ix < 0 || iy < 0 || ix >= W || iy >= H) return null;
     const ordered = [...CONFIG.parts].sort((a, b) => b.z - a.z); // 由頂層往下
     for (const part of ordered) {
       const layer = cache[part.key];
       if (!layer) continue;
       const x = layer.getContext('2d');
-      const alpha = x.getImageData(px, py, 1, 1).data[3];
+      const alpha = x.getImageData(ix, iy, 1, 1).data[3];
       if (alpha > 20) return part.key;
     }
     return null;
