@@ -34,7 +34,7 @@ const CONFIG = {
       anchor: { x: 0.22, y: 0.80 }, label: { x: 0.06, y: 0.74 } },
     { key: 'p2', name: '部件 2', z: 2, default: '#1A1A1A', material: 'matte',
       matteSrc: 'assets/b2.png', metalSrc: 'assets/c2.png',
-      anchor: { x: 0.76, y: 0.33 }, label: { x: 0.95, y: 0.12 } },
+      anchor: { x: 0.90, y: 0.33 }, label: { x: 0.95, y: 0.12 } },
   ],
 
   // 風格快選調色盤（依色卡第 1～10：深黑 → 胡蘿蔔橘）
