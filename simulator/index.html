@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>獨品工坊 · 安全帽彩繪模擬器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div id="brand">獨品工坊 · 安全帽彩繪模擬器</div>
+  <button class="btn btn-ghost" onclick="SimUI.shareUrl()">複製分享網址</button>
+</header>
+
+<div class="layout">
+  <!-- 預覽區 -->
+  <div class="stage">
+    <canvas id="helmetCanvas"></canvas>
+    <div class="stage-hint">點擊帽體部位即可切換選取，再選色／材質</div>
+  </div>
+
+  <!-- 控制面板 -->
+  <aside class="panel">
+    <div>
+      <div class="section-title">選擇部位</div>
+      <div id="partTabs"></div>
+    </div>
+
+    <div>
+      <div class="section-title">材質</div>
+      <div class="mat-toggle">
+        <button id="matMatte">一般色</button>
+        <button id="matMetal">金屬色</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">風格調色盤</div>
+      <div id="palette"></div>
+    </div>
+
+    <div>
+      <div class="section-title">自訂顏色</div>
+      <div class="color-row">
+        <input type="color" id="colorPicker" value="#C0C0C0">
+        <input type="text" id="hexInput" maxlength="7" placeholder="#FFFFFF">
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-block" onclick="SimUI.openOrder()">下單購買</button>
+  </aside>
+</div>
+
+<!-- 下單表單 Modal -->
+<div class="modal" id="orderModal">
+  <form class="modal-card" onsubmit="SimUI.submitOrder(event)">
+    <h3>下單購買</h3>
+    <div class="field">
+      <label>姓名</label>
+      <input type="text" id="fName" required>
+    </div>
+    <div class="field">
+      <label>電話</label>
+      <input type="tel" id="fPhone" required>
+    </div>
+    <div class="field">
+      <label>指定分店</label>
+      <select id="fStore"></select>
+    </div>
+    <div class="field">
+      <label>服務人員</label>
+      <input type="text" id="fStaff">
+    </div>
+    <div class="field">
+      <label>備註</label>
+      <textarea id="fNote" rows="2"></textarea>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn btn-ghost btn-block" onclick="SimUI.closeOrder()">取消</button>
+      <button type="submit" id="submitBtn" class="btn btn-primary btn-block">送出訂單</button>
+    </div>
+  </form>
+</div>
+
+<div id="toast"></div>
+
+<script src="config.js"></script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
