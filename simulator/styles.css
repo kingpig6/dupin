@@ -234,3 +234,12 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   .swatch-label { margin-top: 5px; }
   .disclaimer { margin: 6px auto 16px; }
 }
+
+/* 平板（單欄但面板較寬）：色塊鎖回手機大小，不要被撐大 */
+@media (min-width: 560px) and (max-width: 880px) {
+  #palette {
+    grid-template-columns: repeat(5, 64px);
+    justify-content: start;
+    gap: 8px;
+  }
+}
