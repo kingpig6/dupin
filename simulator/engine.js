@@ -99,20 +99,29 @@ const Engine = (() => {
     // 1) 畫灰階層
     x.drawImage(gray, 0, 0, W, H);
 
-    // 2) 疊色：金屬用 overlay（對比強、折射感）；一般漆用 multiply（柔和）
-    x.globalCompositeOperation = (st.material === 'metal') ? 'overlay' : 'multiply';
+    // 2) 疊色：先用 multiply 上飽和顏色（保留陰影）
+    x.globalCompositeOperation = 'multiply';
     x.fillStyle = st.color;
     x.fillRect(0, 0, W, H);
 
-    // 金屬再補一層 overlay 提高對比與亮度
+    // 3) 用 lighten 把灰階的亮部「補回來」，
+    //    這樣即使選純黑/深色，高光與立體細節也不會被吃掉。
+    //    金屬色補得更強（更亮、折射感）；一般色補得柔和（霧面但有細節）。
+    x.globalCompositeOperation = 'lighten';
+    x.globalAlpha = (st.material === 'metal') ? 0.55 : 0.32;
+    x.drawImage(gray, 0, 0, W, H);
+    x.globalAlpha = 1;
+
+    // 4) 金屬色再補一層 overlay 提高對比與亮度
     if (st.material === 'metal') {
+      x.globalCompositeOperation = 'overlay';
       x.fillStyle = st.color;
       x.globalAlpha = 0.35;
       x.fillRect(0, 0, W, H);
       x.globalAlpha = 1;
     }
 
-    // 3) 用原圖 alpha 重新遮罩，避免染到透明區
+    // 5) 用原圖 alpha 重新遮罩，避免染到透明區
     x.globalCompositeOperation = 'destination-in';
     x.drawImage(gray, 0, 0, W, H);
 
