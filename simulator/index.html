@@ -21,17 +21,15 @@
 <div class="layout">
   <!-- 預覽區 -->
   <div class="stage">
-    <canvas id="helmetCanvas"></canvas>
-    <div class="stage-hint">點擊帽體部位即可切換選取，再選色／材質</div>
+    <div class="canvas-wrap">
+      <canvas id="helmetCanvas"></canvas>
+      <div id="hotspots"></div>
+    </div>
+    <div class="stage-hint">點擊帽體上的橘色標記或部位即可切換選取，再選色／材質</div>
   </div>
 
   <!-- 控制面板 -->
   <aside class="panel">
-    <div>
-      <div class="section-title">選擇部位</div>
-      <div id="partTabs"></div>
-    </div>
-
     <div>
       <div class="section-title">材質</div>
       <div class="mat-toggle">

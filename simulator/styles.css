@@ -63,6 +63,7 @@ header {
   position: relative;
   min-height: 420px;
 }
+.canvas-wrap { position: relative; display: inline-flex; max-width: 100%; }
 #helmetCanvas {
   /* 鎖 1:1，寬高都只給上限，等比縮放、絕不變形壓扁 */
   aspect-ratio: 1 / 1;
@@ -71,6 +72,29 @@ header {
   max-height: 70vh;
   cursor: crosshair;
 }
+
+/* 帽體上的橘色熱點標記 */
+#hotspots { position: absolute; inset: 0; pointer-events: none; }
+.hotspot {
+  position: absolute; transform: translate(-50%, -50%);
+  pointer-events: auto; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  transition: .15s;
+}
+.hotspot .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+}
+.hotspot:hover { filter: brightness(1.12); transform: translate(-50%, -50%) scale(1.05); }
+.hotspot.active { background: var(--accent); color: #241405; }
+.hotspot.active .dot { background: #241405; box-shadow: 0 0 0 3px rgba(36, 20, 5, 0.25); }
 .stage-hint {
   position: absolute; bottom: 12px; left: 16px;
   font-size: 12px; color: var(--muted);
