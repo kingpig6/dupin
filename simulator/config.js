@@ -39,13 +39,13 @@ const CONFIG = {
 
   // 風格快選調色盤（依色卡第 1～10：深黑 → 胡蘿蔔橘）
   palette: [
-    { hex: '#1C1C1C', name: '深黑色',   code: 'BK11' },
+    { hex: '#121212', name: '深黑色',   code: 'BK11' },
     { hex: '#6C7176', name: '炭灰色',   code: 'GY22' },
     { hex: '#F1F4F5', name: '冰極白',   code: 'W10'  },
-    { hex: '#AFD2EA', name: '寶寶藍',   code: 'BB15' },
+    { hex: '#A5AEF3', name: '寶寶藍',   code: 'BB15' },
     { hex: '#EFC4CF', name: '粉紅色',   code: 'PK21' },
     { hex: '#BCA9DC', name: '粉紫色',   code: 'PU18' },
-    { hex: '#C21C26', name: '鮮紅色',   code: 'RD33' },
+    { hex: '#E4212E', name: '鮮紅色',   code: 'RD33' },
     { hex: '#21694A', name: '祖母綠',   code: 'GN44' },
     { hex: '#1E3A63', name: '午夜藍',   code: 'BL55' },
     { hex: '#E8822F', name: '胡蘿蔔橘', code: 'OR66' },
