@@ -160,64 +160,50 @@ const Engine = (() => {
     mainCtx.restore();
   }
 
-  /* ---------- 換色/換材質時的漸層掃光動畫 ---------- */
-  let sweepCanvas = null;
+  /* ---------- 換色/換材質：A 色 → B 色 交叉淡入（不含白光、不閃底色） ---------- */
   let sweepRAF = 0;
-  function animateApply(key) {
-    const layer = cache[key];
-    if (!layer) { render(); return; }
-    if (!sweepCanvas) {
-      sweepCanvas = document.createElement('canvas');
-      sweepCanvas.width = W; sweepCanvas.height = H;
-    }
+  function animateApply(key, prevLayer) {
+    const newLayer = cache[key];
+    if (!prevLayer || !newLayer) { render(); return; }
     if (sweepRAF) cancelAnimationFrame(sweepRAF);
     const z = CONFIG.zoom || 1;
-    const dur = 520;
+    const dur = 360;
     const start = performance.now();
-    const sx = sweepCanvas.getContext('2d');
+    const ordered = [...CONFIG.parts].sort((a, b) => a.z - b.z);
 
     function frame(now) {
       const t = Math.min(1, (now - start) / dur);
-      render();  // 先畫正常場景
-
-      // 一道斜向亮帶，由左掃到右
-      const cx = -W * 0.45 + t * (W * 1.9);
-      sx.clearRect(0, 0, W, H);
-      const band = W * 0.22;
-      const g = sx.createLinearGradient(cx - band, 0, cx + band, H);
-      g.addColorStop(0.0, 'rgba(255,255,255,0)');
-      g.addColorStop(0.5, 'rgba(255,255,255,0.7)');
-      g.addColorStop(1.0, 'rgba(255,255,255,0)');
-      sx.globalCompositeOperation = 'source-over';
-      sx.fillStyle = g;
-      sx.fillRect(0, 0, W, H);
-      // 用該部位的形狀遮罩，亮光只出現在這個部位上
-      sx.globalCompositeOperation = 'destination-in';
-      sx.drawImage(layer, 0, 0, W, H);
-      sx.globalCompositeOperation = 'source-over';
-
-      // 疊到主畫布（同樣套用 zoom），用 sin 包絡淡入淡出
-      const env = Math.sin(t * Math.PI);
+      mainCtx.clearRect(0, 0, W, H);
       mainCtx.save();
       mainCtx.translate(W / 2, H / 2);
       mainCtx.scale(z, z);
       mainCtx.translate(-W / 2, -H / 2);
-      mainCtx.globalCompositeOperation = 'screen';
-      mainCtx.globalAlpha = env;
-      mainCtx.drawImage(sweepCanvas, 0, 0, W, H);
+      mainCtx.drawImage(images.base, 0, 0, W, H);
+      for (const part of ordered) {
+        if (part.key === key) {
+          mainCtx.globalAlpha = 1;  mainCtx.drawImage(prevLayer, 0, 0, W, H);  // 舊色 A
+          mainCtx.globalAlpha = t;  mainCtx.drawImage(newLayer, 0, 0, W, H);   // 漸入新色 B
+          mainCtx.globalAlpha = 1;
+        } else {
+          mainCtx.drawImage(cache[part.key], 0, 0, W, H);
+        }
+      }
       mainCtx.restore();
-      mainCtx.globalAlpha = 1;
-      mainCtx.globalCompositeOperation = 'source-over';
-
       if (t < 1) { sweepRAF = requestAnimationFrame(frame); }
       else { sweepRAF = 0; render(); }
     }
     sweepRAF = requestAnimationFrame(frame);
   }
 
-  // 改色 / 換材質 → 只重算該部位 → 掃光動畫
-  function setColor(key, color)       { state[key].color = color; tintPart(key); animateApply(key); }
-  function setMaterial(key, material) { state[key].material = material; tintPart(key); animateApply(key); }
+  // 改色 / 換材質 → 保留舊圖層做交叉淡入 → 算新圖層 → 動畫
+  function setColor(key, color) {
+    const prev = cache[key];
+    state[key].color = color; tintPart(key); animateApply(key, prev);
+  }
+  function setMaterial(key, material) {
+    const prev = cache[key];
+    state[key].material = material; tintPart(key); animateApply(key, prev);
+  }
 
   function getState() { return JSON.parse(JSON.stringify(state)); }
 
