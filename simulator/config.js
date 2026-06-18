@@ -27,12 +27,14 @@ const CONFIG = {
      z        : 疊圖順序（數字小 = 底層）
      default  : 預設顏色 (HEX)
      material : 預設材質 'metal' | 'matte' */
-  // anchor：橘色熱點標記在帽體上的位置（畫布寬高的比例，0~1，可自行微調）
+  // 標記：anchor = 細線指向帽體上的點；label = 橘色標籤在帽體外的位置（皆為 0~1 比例，可微調）
   parts: [
     { key: 'p1', name: '部件 1', z: 1, default: '#C0C0C0', material: 'matte',
-      matteSrc: 'assets/b1.png', metalSrc: 'assets/c1.png', anchor: { x: 0.30, y: 0.68 } },
+      matteSrc: 'assets/b1.png', metalSrc: 'assets/c1.png',
+      anchor: { x: 0.40, y: 0.76 }, label: { x: 0.06, y: 0.60 } },
     { key: 'p2', name: '部件 2', z: 2, default: '#1A1A1A', material: 'matte',
-      matteSrc: 'assets/b2.png', metalSrc: 'assets/c2.png', anchor: { x: 0.64, y: 0.33 } },
+      matteSrc: 'assets/b2.png', metalSrc: 'assets/c2.png',
+      anchor: { x: 0.60, y: 0.30 }, label: { x: 0.95, y: 0.12 } },
   ],
 
   // 風格快選調色盤（依色卡第 1～10：深黑 → 胡蘿蔔橘）

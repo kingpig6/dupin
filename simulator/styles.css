@@ -73,12 +73,28 @@ header {
   cursor: crosshair;
 }
 
-/* 帽體上的橘色熱點標記 */
+/* 帽體外的橘色標記 + 引線（不遮擋帽體） */
 #hotspots { position: absolute; inset: 0; pointer-events: none; }
+.leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.leaders line {
+  stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke;
+  opacity: 0.7; transition: .15s;
+}
+.leaders line.active { opacity: 1; stroke-width: 2.5; }
+
+/* 引線指向帽體上的小圓點 */
+.hotspot-dot {
+  position: absolute; transform: translate(-50%, -50%);
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+  pointer-events: none;
+}
+.hotspot-dot.active { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35); }
+
+/* 帽體外的橘色標籤（可點） */
 .hotspot {
   position: absolute; transform: translate(-50%, -50%);
   pointer-events: auto; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
   padding: 5px 11px; border-radius: 999px;
   background: rgba(245, 158, 11, 0.16);
   border: 1.5px solid var(--accent);
@@ -88,13 +104,8 @@ header {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   transition: .15s;
 }
-.hotspot .dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--accent); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
-}
 .hotspot:hover { filter: brightness(1.12); transform: translate(-50%, -50%) scale(1.05); }
 .hotspot.active { background: var(--accent); color: #241405; }
-.hotspot.active .dot { background: #241405; box-shadow: 0 0 0 3px rgba(36, 20, 5, 0.25); }
 .stage-hint {
   position: absolute; bottom: 12px; left: 16px;
   font-size: 12px; color: var(--muted);
