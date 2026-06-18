@@ -33,6 +33,14 @@ header {
 }
 #brand { font-size: 16px; font-weight: 700; letter-spacing: 1px; }
 #brand::before { content: '◆ '; color: var(--accent); }
+.hdr-right { display: flex; align-items: center; gap: 8px; }
+.hdr-toggle {
+  display: none;            /* 桌機隱藏，只有行動端出現 */
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  width: 34px; height: 34px; cursor: pointer; font-size: 14px;
+  transition: transform .15s;
+}
 
 .layout {
   display: grid;
@@ -124,6 +132,10 @@ header {
       rgba(0,0,0,0.14) 100%);
 }
 .swatch:hover { transform: scale(1.08); }
+.swatch-label {
+  margin-top: 8px; min-height: 16px;
+  font-size: 12px; color: var(--muted); text-align: center; letter-spacing: 0.5px;
+}
 
 /* 自訂選色 */
 .color-row { display: flex; gap: 10px; align-items: center; }
@@ -185,7 +197,40 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   letter-spacing: 0.5px;
 }
 
-/* 響應式 */
+/* 響應式（行動端優化，桌機不變） */
 @media (max-width: 880px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout {
+    grid-template-columns: 1fr;
+    gap: 10px; margin: 10px auto;
+  }
+
+  /* 頁眉：精簡，可收合 */
+  header { padding: 8px 12px; }
+  #brand {
+    font-size: 13px; letter-spacing: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .share-btn { padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+  .hdr-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  /* 收起摺疊：只留一條細列 + 展開鈕 */
+  header.collapsed { padding: 2px 12px; justify-content: flex-end; }
+  header.collapsed #brand,
+  header.collapsed .share-btn { display: none; }
+  header.collapsed .hdr-toggle { transform: rotate(180deg); }
+
+  /* 帽體卡片：移除外框與留白，直接滿版 */
+  .stage {
+    background: none; border: none; padding: 0;
+    border-radius: 0; min-height: auto;
+  }
+  #helmetCanvas { max-height: 46vh; }
+  .stage-hint { display: none; }   /* 行動端隱藏，省空間 */
+
+  /* 控制面板：更精簡，選色即見效果不用上下滑 */
+  .panel { padding: 12px; gap: 12px; }
+  .section-title { margin-bottom: 5px; letter-spacing: 1px; }
+  .part-tab, .mat-toggle button { padding: 7px; font-size: 12px; min-width: 0; }
+  #palette { gap: 6px; }
+  .swatch-label { margin-top: 5px; }
+  .disclaimer { margin: 6px auto 16px; }
 }
