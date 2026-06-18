@@ -235,11 +235,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   .disclaimer { margin: 6px auto 16px; }
 }
 
-/* 平板（單欄但面板較寬）：色塊鎖回手機大小，不要被撐大 */
+/* 平板（單欄但面板較寬）：色塊與按鈕鎖回手機大小、靠左對齊 */
 @media (min-width: 560px) and (max-width: 880px) {
   #palette {
-    grid-template-columns: repeat(5, 64px);
+    grid-template-columns: repeat(5, 64px);  /* 維持 5 個一排，第一排滿 */
     justify-content: start;
     gap: 8px;
   }
+  /* 部件 / 材質按鈕收窄到與色盤同寬（5×64 + 4×8 = 352px），不再滿版 */
+  #partTabs, .mat-toggle { max-width: 352px; }
 }
