@@ -50,29 +50,29 @@
       </div>
     </div>
 
-    <button class="btn btn-primary btn-block" onclick="SimUI.openOrder()">下單購買</button>
+    <button class="btn btn-primary btn-block" onclick="SimUI.openOrder()">傳送訂單</button>
   </aside>
 </div>
 
 <!-- 下單表單 Modal -->
 <div class="modal" id="orderModal">
   <form class="modal-card" onsubmit="SimUI.submitOrder(event)">
-    <h3>下單購買</h3>
+    <h3>傳送訂單</h3>
     <div class="field">
-      <label>姓名</label>
-      <input type="text" id="fName" required>
+      <label>品名</label>
+      <input type="text" id="fProduct" readonly>
     </div>
     <div class="field">
-      <label>電話</label>
-      <input type="tel" id="fPhone" required>
+      <label>尺寸</label>
+      <select id="fSize" required></select>
     </div>
     <div class="field">
-      <label>指定分店</label>
-      <select id="fStore"></select>
+      <label>指定店家</label>
+      <select id="fStore" required></select>
     </div>
     <div class="field">
       <label>服務人員</label>
-      <input type="text" id="fStaff">
+      <input type="text" id="fStaff" required>
     </div>
     <div class="field">
       <label>備註</label>

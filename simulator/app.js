@@ -146,11 +146,13 @@
 
   /* ---------------- 下單表單 ---------------- */
   function bindStoreOptions() {
-    const sel = $('fStore');
-    CONFIG.stores.forEach((s) => {
+    const fill = (sel, items) => items.forEach((s) => {
       const o = document.createElement('option');
       o.value = s; o.textContent = s; sel.appendChild(o);
     });
+    fill($('fStore'), CONFIG.stores);
+    fill($('fSize'), CONFIG.sizes);
+    $('fProduct').value = CONFIG.product;   // 品名固定
   }
 
   function openOrder() { $('orderModal').classList.add('show'); }
@@ -171,8 +173,8 @@
     const designImage = $('helmetCanvas').toDataURL('image/png');
     const payload = {
       action: 'order',
-      name: $('fName').value,
-      phone: $('fPhone').value,
+      product: $('fProduct').value,
+      size: $('fSize').value,
       store: $('fStore').value,
       staff: $('fStaff').value,
       note: $('fNote').value,
@@ -188,9 +190,10 @@
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload),
       });
-      toast('已送出！我們會盡快與您聯繫');
+      toast('訂單已送出！我們會盡快處理');
       closeOrder();
       e.target.reset();
+      $('fProduct').value = CONFIG.product;   // reset 後復原固定品名
     } catch (err) {
       toast('傳送失敗，請稍後再試');
     } finally {
