@@ -36,16 +36,16 @@ const CONFIG = {
 
   // 風格快選調色盤（依色卡第 1～10：深黑 → 胡蘿蔔橘）
   palette: [
-    '#1C1C1C', // 1 Jet Black 深黑
-    '#6C7176', // 2 Charcoal Gray 炭灰
-    '#F1F4F5', // 3 Polar White 冰極白
-    '#AFD2EA', // 4 Baby Blue 寶寶藍
-    '#EFC4CF', // 5 Pastel Pink 粉紅
-    '#BCA9DC', // 6 Pastel Purple 粉紫
-    '#C21C26', // 7 Vibrant Red 鮮紅
-    '#21694A', // 8 Emerald Green 祖母綠
-    '#1E3A63', // 9 Midnight Blue 午夜藍
-    '#E8822F', // 10 Carrot Orange 胡蘿蔔橘
+    { hex: '#1C1C1C', name: '深黑色',   code: 'BK11' },
+    { hex: '#6C7176', name: '炭灰色',   code: 'GY22' },
+    { hex: '#F1F4F5', name: '冰極白',   code: 'W10'  },
+    { hex: '#AFD2EA', name: '寶寶藍',   code: 'BB15' },
+    { hex: '#EFC4CF', name: '粉紅色',   code: 'PK21' },
+    { hex: '#BCA9DC', name: '粉紫色',   code: 'PU18' },
+    { hex: '#C21C26', name: '鮮紅色',   code: 'RD33' },
+    { hex: '#21694A', name: '祖母綠',   code: 'GN44' },
+    { hex: '#1E3A63', name: '午夜藍',   code: 'BL55' },
+    { hex: '#E8822F', name: '胡蘿蔔橘', code: 'OR66' },
   ],
 
   // Apps Script 部署網址（部署後填入）

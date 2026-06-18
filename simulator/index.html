@@ -10,9 +10,12 @@
 </head>
 <body>
 
-<header>
+<header id="appHeader">
   <div id="brand">獨品工坊 · 安全帽彩繪模擬器</div>
-  <button class="btn btn-ghost" onclick="SimUI.shareUrl()">複製分享網址</button>
+  <div class="hdr-right">
+    <button class="btn btn-ghost share-btn" onclick="SimUI.shareUrl()">複製分享網址</button>
+    <button class="hdr-toggle" onclick="SimUI.toggleHeader()" aria-label="收合頁眉">▾</button>
+  </div>
 </header>
 
 <div class="layout">
@@ -40,6 +43,7 @@
     <div>
       <div class="section-title">風格調色盤</div>
       <div id="palette"></div>
+      <div class="swatch-label" id="swatchLabel"></div>
     </div>
 
     <div>

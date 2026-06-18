@@ -23,7 +23,16 @@
     bindStoreOptions();
     syncControlsToActive();
 
+    // 行動端：頁眉預設收起摺疊
+    if (window.matchMedia('(max-width: 880px)').matches) {
+      $('appHeader').classList.add('collapsed');
+    }
+
     Engine.render();
+  }
+
+  function toggleHeader() {
+    $('appHeader').classList.toggle('collapsed');
   }
 
   /* ---------------- 部位切換頁籤 ---------------- */
@@ -56,14 +65,21 @@
   function buildPalette() {
     const wrap = $('palette');
     wrap.innerHTML = '';
-    CONFIG.palette.forEach((hex) => {
+    CONFIG.palette.forEach((c) => {
+      const label = `${c.name} ${c.code}`;
       const sw = document.createElement('button');
       sw.className = 'swatch';
-      sw.style.background = hex;
-      sw.title = hex;
-      sw.onclick = () => applyColor(hex);
+      sw.style.background = c.hex;
+      sw.title = label;                       // 桌機滑鼠移上去顯示
+      sw.onclick = () => { applyColor(c.hex); showSwatchLabel(label); };
       wrap.appendChild(sw);
     });
+  }
+
+  // 點選色票時，於下方顯示色名+色號（方便客戶溝通）
+  function showSwatchLabel(text) {
+    const el = $('swatchLabel');
+    if (el) el.textContent = text;
   }
 
   /* ---------------- 選色 / 材質控制 ---------------- */
@@ -212,7 +228,7 @@
   }
 
   // 對外暴露給 HTML onclick 使用
-  window.SimUI = { shareUrl, openOrder, closeOrder, submitOrder };
+  window.SimUI = { shareUrl, openOrder, closeOrder, submitOrder, toggleHeader };
 
   window.addEventListener('DOMContentLoaded', start);
 })();
