@@ -2,20 +2,21 @@
  *  安全帽彩繪模擬器 — 深色科技極簡風
  * ============================================================ */
 :root {
-  --bg:      #0c0f14;
-  --panel:   #151a22;
-  --panel-2: #1d242e;
-  --line:    #2a323d;
-  --text:    #e7ecf2;
-  --muted:   #7b8696;
-  --accent:  #38e1c8;   /* 科技青 */
-  --accent-2:#5b8cff;
+  /* 配色參考開單系統：橘色 + 深藍 */
+  --bg:      #0b1426;   /* 深藍底 */
+  --panel:   #111c30;
+  --panel-2: #18253c;
+  --line:    #25344d;
+  --text:    #eef2f8;
+  --muted:   #8593a8;
+  --accent:  #f59e0b;   /* 主色：開單系統橘 */
+  --accent-2:#f97316;   /* 漸層用深橘 */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  background: radial-gradient(1200px 600px at 50% -10%, #131a24 0%, var(--bg) 60%);
+  background: radial-gradient(1200px 600px at 50% -10%, #16233c 0%, var(--bg) 60%);
   color: var(--text);
   font-family: 'Noto Sans TC', -apple-system, sans-serif;
   min-height: 100vh;
@@ -26,7 +27,7 @@ header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
-  background: rgba(12,15,20,0.8);
+  background: rgba(11,20,38,0.85);
   backdrop-filter: blur(8px);
   position: sticky; top: 0; z-index: 20;
 }
@@ -91,7 +92,7 @@ header {
   border: 1px solid var(--line); cursor: pointer;
   font-size: 13px; transition: .15s;
 }
-.part-tab.active { color: #06231f; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.part-tab.active { color: #241405; background: var(--accent); border-color: var(--accent); font-weight: 700; }
 
 /* 材質切換 */
 .mat-toggle { display: flex; gap: 8px; }
@@ -128,7 +129,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   padding: 12px 16px; border-radius: 10px; border: none; cursor: pointer;
   font-weight: 700; font-size: 14px; transition: .15s;
 }
-.btn-primary { background: var(--accent); color: #06231f; }
+.btn-primary { background: var(--accent); color: #241405; }
 .btn-primary:hover { filter: brightness(1.08); }
 .btn-ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
 .btn-block { width: 100%; }
@@ -153,7 +154,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 /* Toast */
 #toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
-  background: var(--accent); color: #06231f; font-weight: 700;
+  background: var(--accent); color: #241405; font-weight: 700;
   padding: 12px 20px; border-radius: 10px; opacity: 0; pointer-events: none;
   transition: .25s; z-index: 60;
 }

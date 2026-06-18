@@ -120,14 +120,14 @@ const Engine = (() => {
       // ── 一般色：自然平光漆 ──
       // 2) 先鋪上實色（normal 混合）：讓白能白、黑能黑、彩色準確，全色域可用
       x.globalCompositeOperation = 'source-over';
-      x.globalAlpha = 0.62;
+      x.globalAlpha = 0.80;
       x.fillStyle = st.color;
       x.fillRect(0, 0, W, H);
       x.globalAlpha = 1;
 
       // 3) 再用灰階以 multiply 把「形體陰影」壓回來（無彩、不加反光）→ 霧面立體感
       x.globalCompositeOperation = 'multiply';
-      x.globalAlpha = 0.45;
+      x.globalAlpha = 0.20;
       x.drawImage(gray, 0, 0, W, H);
       x.globalAlpha = 1;
     }
