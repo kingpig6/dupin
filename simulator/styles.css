@@ -147,27 +147,37 @@ header {
 .mat-toggle button.active { color: var(--text); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 
 /* 調色盤 */
-/* 依容器寬度自動填滿：寬就多排幾個(6/8…)、窄就少，每排撐滿不留空 */
-#palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(58px, 1fr)); gap: 8px; }
+/* 精緻色卡：色塊（玻璃斜向反光）+ 名稱在下方，依寬度自動填滿 */
+#palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 10px; }
 .swatch {
+  display: flex; flex-direction: column; gap: 6px; align-items: stretch;
+  background: none; border: none; padding: 0; cursor: pointer;
+}
+.swatch .chip {
   position: relative; overflow: hidden;
-  aspect-ratio: 1; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--line); transition: transform .1s;
-  padding: 0;
+  aspect-ratio: 4 / 3; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.12);
+  transition: transform .12s, box-shadow .12s;
 }
-/* 玻璃烤漆反光條：頂部亮帶 + 底部微陰影，讓色票更真實 */
-.swatch::before {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  border-radius: inherit;
+/* 斜向玻璃光澤：左上高光 → 漸隱 → 右下微陰影 */
+.swatch .chip::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
   background:
-    linear-gradient(180deg,
-      rgba(255,255,255,0.65) 0%,
-      rgba(255,255,255,0.28) 14%,
-      rgba(255,255,255,0.05) 30%,
-      rgba(255,255,255,0) 46%,
-      rgba(0,0,0,0.14) 100%);
+    linear-gradient(125deg,
+      rgba(255,255,255,0.62) 0%,
+      rgba(255,255,255,0.18) 20%,
+      rgba(255,255,255,0.02) 40%,
+      rgba(255,255,255,0) 55%,
+      rgba(0,0,0,0.16) 100%);
 }
-.swatch:hover { transform: scale(1.08); }
+.swatch .name {
+  font-size: 11px; color: var(--muted); text-align: center;
+  letter-spacing: 0.5px; line-height: 1.2;
+}
+.swatch:hover .chip { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.12); }
+.swatch.active .chip { outline: 2px solid var(--accent); outline-offset: 1px; }
+.swatch.active .name { color: var(--accent); font-weight: 700; }
 .swatch-label {
   margin-top: 8px; min-height: 16px;
   font-size: 12px; color: var(--muted); text-align: center; letter-spacing: 0.5px;
