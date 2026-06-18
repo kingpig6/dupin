@@ -35,15 +35,18 @@
     $('appHeader').classList.toggle('collapsed');
   }
 
-  /* ---------------- 部位切換頁籤 ---------------- */
+  /* ---------------- 部位熱點標記（帽體上的橘色按鈕） ---------------- */
   function buildPartTabs() {
-    const wrap = $('partTabs');
+    const wrap = $('hotspots');
     wrap.innerHTML = '';
     CONFIG.parts.forEach((p) => {
+      const a = p.anchor || { x: 0.5, y: 0.5 };
       const b = document.createElement('button');
-      b.className = 'part-tab';
-      b.textContent = p.name;
+      b.className = 'hotspot';
       b.dataset.key = p.key;
+      b.style.left = (a.x * 100) + '%';
+      b.style.top = (a.y * 100) + '%';
+      b.innerHTML = `<span class="dot"></span><span>${p.name}</span>`;
       b.onclick = () => setActive(p.key);
       wrap.appendChild(b);
     });
@@ -57,7 +60,7 @@
   }
 
   function highlightActiveTab() {
-    document.querySelectorAll('.part-tab').forEach((b) =>
+    document.querySelectorAll('.hotspot').forEach((b) =>
       b.classList.toggle('active', b.dataset.key === activeKey));
   }
 
