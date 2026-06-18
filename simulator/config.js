@@ -40,6 +40,8 @@ const CONFIG = {
   // Apps Script 部署網址（部署後填入）
   apiUrl: 'YOUR_APPS_SCRIPT_URL_HERE',
 
-  // 下單表單分店選項
-  stores: ['台中總店', '台北店', '高雄店'],
+  // 下單表單選項
+  product: 'RX-7X',                                  // 品名（固定）
+  sizes: ['S', 'M', 'L', 'XL'],                      // 尺寸下拉
+  stores: ['新竹哈客部品', '高雄哈客部品', '林儒部品'],  // 指定店家（對應 AppSheet 客戶）
 };
