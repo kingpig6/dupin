@@ -158,6 +158,13 @@
 
   async function submitOrder(e) {
     e.preventDefault();
+
+    // 尚未設定 Apps Script 寄信網址時，不硬送，給友善提示
+    if (!CONFIG.apiUrl || CONFIG.apiUrl === 'YOUR_APPS_SCRIPT_URL_HERE') {
+      toast('下單功能尚未啟用，請先聯繫門市');
+      return;
+    }
+
     const btn = $('submitBtn');
     btn.disabled = true; btn.textContent = '傳送中…';
 
