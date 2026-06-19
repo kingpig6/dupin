@@ -1,0 +1,288 @@
+/* ============================================================
+ *  安全帽彩繪模擬器 — 深色科技極簡風
+ * ============================================================ */
+:root {
+  /* 配色參考開單系統：橘色 + 深藍 */
+  --bg:      #0b1426;   /* 深藍底 */
+  --panel:   #111c30;
+  --panel-2: #18253c;
+  --line:    #25344d;
+  --text:    #eef2f8;
+  --muted:   #8593a8;
+  --accent:  #f59e0b;   /* 主色：開單系統橘 */
+  --accent-2:#f97316;   /* 漸層用深橘 */
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: radial-gradient(1200px 600px at 50% -10%, #16233c 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: 'Noto Sans TC', -apple-system, sans-serif;
+  min-height: 100vh;
+}
+
+/* 頂部 */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(11,20,38,0.85);
+  backdrop-filter: blur(8px);
+  position: sticky; top: 0; z-index: 20;
+}
+#brand { font-size: 16px; font-weight: 700; letter-spacing: 1px; }
+#brand::before { content: '◆ '; color: var(--accent); }
+.hdr-right { display: flex; align-items: center; gap: 8px; }
+.hdr-toggle {
+  display: none;            /* 桌機隱藏，只有行動端出現 */
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  width: 34px; height: 34px; cursor: pointer; font-size: 14px;
+  transition: transform .15s;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+  max-width: 1280px;
+  margin: 24px auto;
+  padding: 0 20px;
+}
+
+/* 預覽區 */
+.stage {
+  background:
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    linear-gradient(135deg, var(--accent), var(--accent-2)) border-box;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  padding: 18px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  min-height: 420px;
+}
+.canvas-wrap { position: relative; display: inline-flex; max-width: 100%; }
+#helmetCanvas {
+  /* 鎖 1:1，寬高都只給上限，等比縮放、絕不變形壓扁 */
+  aspect-ratio: 1 / 1;
+  width: auto; height: auto;
+  max-width: 100%;
+  max-height: 70vh;
+  cursor: crosshair;
+}
+
+/* 帽體外的橘色標記 + 引線（不遮擋帽體） */
+#hotspots { position: absolute; inset: 0; pointer-events: none; }
+.leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.leaders line {
+  stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke;
+  opacity: 0.7; transition: .15s;
+}
+.leaders line.active { opacity: 1; stroke-width: 2.5; }
+
+/* 引線指向帽體上的小圓點 */
+.hotspot-dot {
+  position: absolute; transform: translate(-50%, -50%);
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+  pointer-events: none;
+}
+.hotspot-dot.active { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35); }
+
+/* 帽體外的橘色標籤（可點） */
+.hotspot {
+  position: absolute; transform: translate(-50%, -50%);
+  pointer-events: auto; cursor: pointer;
+  padding: 5px 11px; border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  transition: .15s;
+}
+.hotspot:hover { filter: brightness(1.12); transform: translate(-50%, -50%) scale(1.05); }
+.hotspot.active { background: var(--accent); color: #241405; }
+.stage-hint {
+  position: absolute; bottom: 12px; left: 16px;
+  font-size: 12px; color: var(--muted);
+}
+
+/* 控制面板 */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+  display: flex; flex-direction: column; gap: 18px;
+  height: fit-content;
+}
+.section-title {
+  font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+/* 部位頁籤 */
+#partTabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.part-tab {
+  flex: 1; min-width: 90px;
+  padding: 10px; border-radius: 10px;
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--line); cursor: pointer;
+  font-size: 13px; transition: .15s;
+}
+.part-tab.active { color: #241405; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+
+/* 材質切換 */
+.mat-toggle { display: flex; gap: 8px; }
+.mat-toggle button {
+  flex: 1; padding: 10px; border-radius: 10px;
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--line); cursor: pointer; font-size: 13px; transition: .15s;
+}
+.mat-toggle button.active { color: var(--text); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+
+/* 調色盤 */
+/* 精緻色卡：色塊（玻璃斜向反光）+ 名稱在下方，依寬度自動填滿 */
+#palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 10px; }
+.swatch {
+  display: flex; flex-direction: column; gap: 6px; align-items: stretch;
+  background: none; border: none; padding: 0; cursor: pointer;
+}
+.swatch .chip {
+  position: relative; overflow: hidden;
+  aspect-ratio: 4 / 3; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.12);
+  transition: transform .12s, box-shadow .12s;
+}
+/* 斜向玻璃光澤：左上高光 → 漸隱 → 右下微陰影 */
+.swatch .chip::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background:
+    linear-gradient(125deg,
+      rgba(255,255,255,0.62) 0%,
+      rgba(255,255,255,0.18) 20%,
+      rgba(255,255,255,0.02) 40%,
+      rgba(255,255,255,0) 55%,
+      rgba(0,0,0,0.16) 100%);
+}
+.swatch .name {
+  font-size: 11px; color: var(--muted); text-align: center;
+  letter-spacing: 0.5px; line-height: 1.2;
+}
+.swatch:hover .chip { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.12); }
+.swatch.active .chip { outline: 2px solid var(--accent); outline-offset: 1px; }
+.swatch.active .name { color: var(--accent); font-weight: 700; }
+.swatch-label {
+  margin-top: 8px; min-height: 16px;
+  font-size: 12px; color: var(--muted); text-align: center; letter-spacing: 0.5px;
+}
+
+/* 自訂選色 */
+.color-row { display: flex; gap: 10px; align-items: center; }
+input[type=color] {
+  width: 48px; height: 40px; padding: 0; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--panel-2); cursor: pointer;
+}
+input[type=text], input[type=tel], select, textarea {
+  flex: 1; width: 100%;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 10px 12px; font-size: 14px;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+/* 按鈕 */
+.btn {
+  padding: 12px 16px; border-radius: 10px; border: none; cursor: pointer;
+  font-weight: 700; font-size: 14px; transition: .15s;
+}
+.btn-primary { background: var(--accent); color: #241405; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+.btn-block { width: 100%; }
+.btn-row { display: flex; gap: 10px; }
+
+/* Modal */
+.modal {
+  position: fixed; inset: 0; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.6); z-index: 50; padding: 20px;
+}
+.modal.show { display: flex; }
+.modal-card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 16px; padding: 22px; width: 100%; max-width: 420px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.modal-card h3 { font-size: 18px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 12px; color: var(--muted); }
+
+/* Toast */
+#toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--accent); color: #241405; font-weight: 700;
+  padding: 12px 20px; border-radius: 10px; opacity: 0; pointer-events: none;
+  transition: .25s; z-index: 60;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 色差提示 */
+.disclaimer {
+  max-width: 1280px;
+  margin: 4px auto 28px;
+  padding: 0 20px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+}
+
+/* 響應式（行動端優化，桌機不變） */
+@media (max-width: 880px) {
+  .layout {
+    grid-template-columns: 1fr;
+    gap: 10px; margin: 10px auto;
+  }
+
+  /* 頁眉：精簡，可收合 */
+  header { padding: 8px 12px; }
+  #brand {
+    font-size: 13px; letter-spacing: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .share-btn { padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+  .hdr-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  /* 收起摺疊：只留一條細列 + 展開鈕 */
+  header.collapsed { padding: 2px 12px; justify-content: flex-end; }
+  header.collapsed #brand,
+  header.collapsed .share-btn { display: none; }
+  header.collapsed .hdr-toggle { transform: rotate(180deg); }
+
+  /* 帽體卡片：移除外框與留白，直接滿版 */
+  .stage {
+    background: none; border: none; padding: 0;
+    border-radius: 0; min-height: auto;
+  }
+  #helmetCanvas { max-height: 46vh; }
+  .stage-hint { display: none; }   /* 行動端隱藏，省空間 */
+
+  /* 控制面板：更精簡，選色即見效果不用上下滑 */
+  .panel { padding: 12px; gap: 12px; }
+  .section-title { margin-bottom: 5px; letter-spacing: 1px; }
+  .part-tab, .mat-toggle button { padding: 7px; font-size: 12px; min-width: 0; }
+  #palette { gap: 6px; }
+  .swatch-label { margin-top: 5px; }
+  .disclaimer { margin: 6px auto 16px; }
+}
+
+/* 平板（單欄但面板較寬）：部件/材質按鈕收窄靠左，不再滿版
+   （色盤已用 auto-fill 依寬度自動填滿，不需另外設定） */
+@media (min-width: 560px) and (max-width: 880px) {
+  #partTabs, .mat-toggle { max-width: 352px; }
+}

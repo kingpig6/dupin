@@ -1,0 +1,237 @@
+/* ============================================================
+ *  渲染引擎 — 雙軌灰階圖層混合 (Canvas 2D)
+ *  - 每個可變色部位有 metal / matte 兩張灰階 PNG
+ *  - 使用者選色時，用 globalCompositeOperation 把 RGB 疊到灰階上，
+ *    保留原圖的陰影與高光，並用原圖 alpha 重新遮罩避免染到透明區。
+ *  - 找不到素材檔時，自動產生程式化佔位灰階圖，確保系統可運作。
+ * ============================================================ */
+const Engine = (() => {
+  const W = CONFIG.canvas.width;
+  const H = CONFIG.canvas.height;
+
+  let mainCtx = null;
+  const images = { base: null, parts: {} };   // parts[key] = { metal, matte }
+  const cache = {};                            // 每部位上色後的離屏 canvas 快取
+
+  // 部位目前狀態：{ color, material }
+  const state = {};
+
+  /* ---------- 載入素材（缺檔自動產生佔位圖） ---------- */
+  function loadImage(src, fallbackDraw) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(makePlaceholder(fallbackDraw)); // 缺檔 → 佔位
+      img.src = src;
+    });
+  }
+
+  // 以離屏 canvas 畫出灰階佔位圖（回傳可當 drawImage 來源的 canvas）
+  function makePlaceholder(drawFn) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    drawFn(x);
+    return c;
+  }
+
+  // base 佔位：帽體輪廓 + 面罩
+  function drawBasePlaceholder(x) {
+    x.clearRect(0, 0, W, H);
+    const g = x.createRadialGradient(W * 0.45, H * 0.4, 80, W * 0.5, H * 0.5, W * 0.55);
+    g.addColorStop(0, '#3a3a3a'); g.addColorStop(1, '#101010');
+    x.fillStyle = g;
+    x.beginPath();
+    x.ellipse(W * 0.5, H * 0.48, W * 0.34, H * 0.40, 0, 0, Math.PI * 2);
+    x.fill();
+    // 面罩（透明灰）
+    x.fillStyle = 'rgba(180,200,220,0.35)';
+    x.beginPath();
+    x.ellipse(W * 0.42, H * 0.46, W * 0.20, H * 0.22, -0.1, 0, Math.PI * 2);
+    x.fill();
+  }
+
+  // part 灰階佔位：用不同形狀 + 灰階漸層，metal 對比較高
+  function drawPartPlaceholder(part, material) {
+    return (x) => {
+      x.clearRect(0, 0, W, H);
+      const cx = W * 0.5, cy = H * 0.44;
+      const seed = part.key.charCodeAt(part.key.length - 1);
+      const g = x.createLinearGradient(cx - 300, cy - 200, cx + 300, cy + 200);
+      if (material === 'metal') {
+        g.addColorStop(0, '#fafafa'); g.addColorStop(0.5, '#8a8a8a'); g.addColorStop(1, '#ffffff');
+      } else {
+        g.addColorStop(0, '#b5b5b5'); g.addColorStop(0.5, '#6f6f6f'); g.addColorStop(1, '#9a9a9a');
+      }
+      x.fillStyle = g;
+      x.beginPath();
+      // 依 seed 畫不同角度的條帶狀圖騰
+      const rot = (seed % 5) * 0.4;
+      x.translate(cx, cy);
+      x.rotate(rot);
+      x.fillRect(-260, -40 - (seed % 3) * 60, 520, 70);
+      x.fillRect(-200, 60, 400, 50);
+      x.setTransform(1, 0, 0, 1, 0, 0);
+    };
+  }
+
+  async function load() {
+    images.base = await loadImage(CONFIG.baseLayer, drawBasePlaceholder);
+    for (const part of CONFIG.parts) {
+      images.parts[part.key] = {
+        metal: await loadImage(part.metalSrc, drawPartPlaceholder(part, 'metal')),
+        matte: await loadImage(part.matteSrc, drawPartPlaceholder(part, 'matte')),
+      };
+      state[part.key] = { color: part.default, material: part.material };
+    }
+  }
+
+  /* ---------- 單部位上色（標準 tinting 配方） ---------- */
+  function tintPart(key) {
+    const part = CONFIG.parts.find(p => p.key === key);
+    const st = state[key];
+    const gray = images.parts[key][st.material];   // 依材質選 metal / matte 灰階層
+
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const x = c.getContext('2d');
+
+    // 1) 畫灰階層
+    x.drawImage(gray, 0, 0, W, H);
+
+    if (st.material === 'metal') {
+      // ── 金屬色：強反光、折射感 ──
+      // multiply 上飽和色 → lighten 大量補亮部 → overlay 再加對比
+      x.globalCompositeOperation = 'multiply';
+      x.fillStyle = st.color;
+      x.fillRect(0, 0, W, H);
+
+      x.globalCompositeOperation = 'lighten';
+      x.globalAlpha = 0.55;
+      x.drawImage(gray, 0, 0, W, H);
+      x.globalAlpha = 1;
+
+      x.globalCompositeOperation = 'overlay';
+      x.fillStyle = st.color;
+      x.globalAlpha = 0.35;
+      x.fillRect(0, 0, W, H);
+      x.globalAlpha = 1;
+    } else {
+      // ── 一般色：自然平光漆 ──
+      // 2) 先鋪上實色（normal 混合）：讓白能白、黑能黑、彩色準確，全色域可用
+      x.globalCompositeOperation = 'source-over';
+      x.globalAlpha = 0.86;
+      x.fillStyle = st.color;
+      x.fillRect(0, 0, W, H);
+      x.globalAlpha = 1;
+
+      // 3) 用 soft-light 帶回「形體陰影」：亮度保留、不像 multiply 把淺色拉灰
+      //    淺色（粉/白）能維持鮮明，深色仍有立體層次。
+      x.globalCompositeOperation = 'soft-light';
+      x.globalAlpha = 0.65;
+      x.drawImage(gray, 0, 0, W, H);
+      x.globalAlpha = 1;
+    }
+
+    // 5) 用原圖 alpha 重新遮罩，避免染到透明區
+    x.globalCompositeOperation = 'destination-in';
+    x.drawImage(gray, 0, 0, W, H);
+
+    x.globalCompositeOperation = 'source-over';
+    cache[key] = c;
+    return c;
+  }
+
+  /* ---------- 合成到主畫布 ---------- */
+  function render() {
+    mainCtx.clearRect(0, 0, W, H);
+    const z = CONFIG.zoom || 1;
+    mainCtx.save();
+    // 以畫布中心為基準放大帽體
+    mainCtx.translate(W / 2, H / 2);
+    mainCtx.scale(z, z);
+    mainCtx.translate(-W / 2, -H / 2);
+    mainCtx.drawImage(images.base, 0, 0, W, H);          // 底圖
+    const ordered = [...CONFIG.parts].sort((a, b) => a.z - b.z);
+    for (const part of ordered) {
+      const layer = cache[part.key] || tintPart(part.key);
+      mainCtx.drawImage(layer, 0, 0, W, H);
+    }
+    mainCtx.restore();
+  }
+
+  /* ---------- 換色/換材質：A 色 → B 色 交叉淡入（不含白光、不閃底色） ---------- */
+  let sweepRAF = 0;
+  function animateApply(key, prevLayer) {
+    const newLayer = cache[key];
+    if (!prevLayer || !newLayer) { render(); return; }
+    if (sweepRAF) cancelAnimationFrame(sweepRAF);
+    const z = CONFIG.zoom || 1;
+    const dur = 360;
+    const start = performance.now();
+    const ordered = [...CONFIG.parts].sort((a, b) => a.z - b.z);
+
+    function frame(now) {
+      const t = Math.min(1, (now - start) / dur);
+      mainCtx.clearRect(0, 0, W, H);
+      mainCtx.save();
+      mainCtx.translate(W / 2, H / 2);
+      mainCtx.scale(z, z);
+      mainCtx.translate(-W / 2, -H / 2);
+      mainCtx.drawImage(images.base, 0, 0, W, H);
+      for (const part of ordered) {
+        if (part.key === key) {
+          mainCtx.globalAlpha = 1;  mainCtx.drawImage(prevLayer, 0, 0, W, H);  // 舊色 A
+          mainCtx.globalAlpha = t;  mainCtx.drawImage(newLayer, 0, 0, W, H);   // 漸入新色 B
+          mainCtx.globalAlpha = 1;
+        } else {
+          mainCtx.drawImage(cache[part.key], 0, 0, W, H);
+        }
+      }
+      mainCtx.restore();
+      if (t < 1) { sweepRAF = requestAnimationFrame(frame); }
+      else { sweepRAF = 0; render(); }
+    }
+    sweepRAF = requestAnimationFrame(frame);
+  }
+
+  // 改色 / 換材質 → 保留舊圖層做交叉淡入 → 算新圖層 → 動畫
+  function setColor(key, color) {
+    const prev = cache[key];
+    state[key].color = color; tintPart(key); animateApply(key, prev);
+  }
+  function setMaterial(key, material) {
+    const prev = cache[key];
+    state[key].material = material; tintPart(key); animateApply(key, prev);
+  }
+
+  function getState() { return JSON.parse(JSON.stringify(state)); }
+
+  async function init(canvasEl) {
+    mainCtx = canvasEl.getContext('2d');
+    canvasEl.width = W; canvasEl.height = H;
+    await load();
+    CONFIG.parts.forEach(p => tintPart(p.key));
+    render();
+  }
+
+  // 提供命中偵測：回傳點擊座標落在哪個部位（用該部位灰階 alpha 判斷，由上層往下找）
+  function hitTest(px, py) {
+    // 反算 zoom：畫面點擊座標 → 未縮放的圖層座標
+    const z = CONFIG.zoom || 1;
+    const ix = Math.round(W / 2 + (px - W / 2) / z);
+    const iy = Math.round(H / 2 + (py - H / 2) / z);
+    if (ix < 0 || iy < 0 || ix >= W || iy >= H) return null;
+    const ordered = [...CONFIG.parts].sort((a, b) => b.z - a.z); // 由頂層往下
+    for (const part of ordered) {
+      const layer = cache[part.key];
+      if (!layer) continue;
+      const x = layer.getContext('2d');
+      const alpha = x.getImageData(ix, iy, 1, 1).data[3];
+      if (alpha > 20) return part.key;
+    }
+    return null;
+  }
+
+  return { init, setColor, setMaterial, getState, hitTest, render };
+})();
