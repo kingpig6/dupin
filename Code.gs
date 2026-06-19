@@ -92,7 +92,7 @@ function handleRequest(e) {
       case 'getPDFUrl':       result = getPDFUrl(body.itemId, body.type); break;
       case 'uploadItemPhoto': result = uploadItemPhoto(body.itemId, body.base64, body.fileName); break;
       case 'parseVoice':      result = parseVoiceWithAI(body.text, body.customers); break;
-      case 'parseImage':      result = parseImageWithAI(body.base64, body.customers); break;
+      case 'parseText':       result = parseTextWithAI(body.text, body.customers); break;
       default:                result = { error: 'Unknown action: ' + action };
     }
 
@@ -854,28 +854,26 @@ function parseVoiceWithAI(text, customers) {
 }
 
 // ── Claude Vision 圖片開單解析 ───────────────
-function parseImageWithAI(base64, customers) {
+function parseTextWithAI(text, customers) {
   const key = PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY');
   if (!key) return { error: '未設定 CLAUDE_API_KEY' };
-
-  // 取出 MIME type 和純 base64 資料
-  const match = String(base64 || '').match(/^data:(.+?);base64,(.+)$/);
-  if (!match) return { error: '圖片格式錯誤' };
-  const mediaType = match[1];
-  const imageData = match[2];
+  if (!text) return { error: '文字內容為空' };
 
   const customerList = (customers || []).join('、') || '（無）';
   const today = new Date().toISOString().slice(0, 10);
 
-  const prompt = `你是一個訂單助手，請從這張圖片（可能是 LINE 截圖、貨運單或訂單照片）中萃取工作項目資訊，回傳 JSON。
+  const prompt = `你是一個訂單助手，請從以下文字訊息（可能是 LINE 對話、訂單描述）中萃取工作項目資訊，回傳 JSON。
 
 現有客戶清單：${customerList}
 今天日期：${today}
 
+訊息內容：
+${text}
+
 請回傳以下 JSON 格式（無法辨識的欄位留空字串）：
 {
   "customer": "客戶名稱（從現有客戶清單中選，若無相符則填辨識到的名稱，若完全無法判斷則留空）",
-  "deadline": "交貨期限（YYYY-MM-DD，若提到日期如6/15請轉換，無法判斷則留空）",
+  "deadline": "交貨期限（YYYY-MM-DD，若提到日期如6/15請轉換為當年，無法判斷則留空）",
   "items": [
     {
       "name": "品名（如：烤漆鴨尾、白地圖L、客製化彩繪等）",
@@ -899,15 +897,9 @@ function parseImageWithAI(base64, customers) {
       'content-type': 'application/json'
     },
     payload: JSON.stringify({
-      model: 'claude-opus-4-8',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageData } },
-          { type: 'text', text: prompt }
-        ]
-      }]
+      messages: [{ role: 'user', content: prompt }]
     }),
     muteHttpExceptions: true
   });

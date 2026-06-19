@@ -724,16 +724,16 @@ function renderNewOrder() {
 
     <div class="card bg-gray-800 border border-gray-600">
       <button type="button" onclick="this.nextElementSibling.classList.toggle('hidden')" class="w-full flex items-center justify-between">
-        <span class="section-title mb-0">圖片開單</span>
-        <span class="text-xs text-gray-400">AI 辨識截圖/照片 ▼</span>
+        <span class="section-title mb-0">文字開單</span>
+        <span class="text-xs text-gray-400">AI 解析訊息 ▼</span>
       </button>
       <div class="hidden mt-3">
-        <p class="text-xs text-gray-400 mb-3">上傳 LINE 截圖或訂單照片，自動解析品名、規格、備註等</p>
+        <p class="text-xs text-gray-400 mb-3">貼上 LINE 訊息或任何文字描述，AI 自動解析品名、規格、備註等</p>
         <div id="imgResult" class="text-xs text-amber-300 mb-2 min-h-4"></div>
-        <label class="w-full py-3 rounded-lg font-bold text-white bg-purple-700 active:bg-purple-900 flex items-center justify-center gap-2 cursor-pointer">
-          <span>📷 上傳圖片解析</span>
-          <input type="file" accept="image/*" class="hidden" onchange="parseImageOrder(this)">
-        </label>
+        <textarea id="textOrderInput" rows="4" placeholder="貼上訊息內容，例如：烤漆鴨尾白地圖L，6/20前交貨，完工後一起寄到高雄"></textarea>
+        <button type="button" onclick="parseTextOrder()" class="w-full mt-2 py-3 rounded-lg font-bold text-white bg-purple-700 active:bg-purple-900">
+          ✨ AI 解析文字
+        </button>
       </div>
     </div>
 
@@ -1060,28 +1060,20 @@ async function parseVoiceWithAI(text) {
   showToast('AI 解析完成 ✓');
 }
 
-// ── 圖片開單 ─────────────────────────────────
-async function parseImageOrder(input) {
-  const file = input.files[0];
-  if (!file) return;
+// ── 文字開單 ─────────────────────────────────
+async function parseTextOrder() {
+  const input = document.getElementById('textOrderInput');
+  const text = (input?.value || '').trim();
+  if (!text) { showToast('請先輸入文字內容'); return; }
   const resultEl = document.getElementById('imgResult');
-  if (resultEl) resultEl.textContent = '⏳ 上傳中…';
+  if (resultEl) resultEl.textContent = '⏳ AI 解析中…';
 
-  // 轉 base64
-  const base64 = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => resolve(e.target.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-
-  if (resultEl) resultEl.textContent = '⏳ AI 辨識中…';
   const customerNames = state.customers.map(c => c['客戶名稱']);
-  const res = await api('parseImage', null, { base64, customers: customerNames });
+  const res = await api('parseText', null, { text, customers: customerNames });
 
   if (!res.success || !res.data) {
     if (resultEl) resultEl.textContent = 'AI 解析失敗：' + (res.error || 'unknown');
-    showToast('圖片解析失敗');
+    showToast('文字解析失敗');
     return;
   }
 
@@ -1120,8 +1112,8 @@ async function parseImageOrder(input) {
     }
   }
   if (resultEl) resultEl.textContent = '✓ 解析完成，請確認後送出';
-  showToast('圖片解析完成 ✓');
-  input.value = '';
+  showToast('文字解析完成 ✓');
+  if (input) input.value = '';
 }
 
 // ── 客戶管理 ────────────────────────────────
