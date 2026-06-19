@@ -1,0 +1,4 @@
+# 只推送後端檔案到 Apps Script，其餘忽略
+**/**
+!Code.gs
+!appsscript.json
