@@ -189,6 +189,7 @@ function normalizeItem(it) {
     費用金額:     Number(it['費用金額']) || 0,
     費用支付狀態: it['費用支付狀態'] || '',
     費用支付日期: formatDate(it['費用支付日期']),
+    參考圖片:     it['參考圖片']     || '',
   };
 }
 
@@ -605,6 +606,20 @@ function editItem(id) {
         <button onclick="saveItem('${id}')" class="btn btn-primary text-sm px-3">儲存</button>
       </div>
     </div>
+    <div class="border-t border-gray-600 pt-3 mb-3">
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-xs text-gray-400">參考圖片（施工用）</span>
+        <label class="btn btn-ghost text-xs cursor-pointer">
+          上傳
+          <input type="file" accept="image/*" class="hidden"
+            onchange="uploadRefPhoto('${id}',this)">
+        </label>
+      </div>
+      <div id="refPhotoGrid_${id}" class="grid grid-cols-3 gap-2">
+        ${renderRefPhotoGrid(it['參考圖片'], id)}
+      </div>
+      <div id="refUploadProg_${id}" class="hidden text-xs text-amber-400 text-center mt-1">上傳中…</div>
+    </div>
     <div class="border-t border-gray-600 pt-3">
       <div class="flex justify-between items-center mb-2">
         <span class="text-xs text-gray-400">完工照片</span>
@@ -717,6 +732,53 @@ async function deleteItemPhoto(itemId, idx) {
   const grid = document.getElementById(`itemPhotoGrid_${itemId}`);
   if (grid) grid.innerHTML = renderItemPhotoGrid(it['完工照片'], itemId);
   await api('update', '工作項目', { key: itemId, data: { '完工照片': it['完工照片'] } });
+  saveCache();
+}
+
+// ── 參考圖片 ─────────────────────────────────
+function renderRefPhotoGrid(photoField, itemId) {
+  if (!photoField) return '<p class="text-gray-500 text-xs col-span-3">尚無參考圖片</p>';
+  const urls = String(photoField).split(',').filter(u => u.trim());
+  if (!urls.length) return '<p class="text-gray-500 text-xs col-span-3">尚無參考圖片</p>';
+  return urls.map((url, idx) => `
+    <div class="relative">
+      <a href="${url.trim()}" target="_blank">
+        <img src="${url.trim()}" class="w-full aspect-square object-cover rounded-lg border border-gray-600"/>
+      </a>
+      <button onclick="deleteRefPhoto('${itemId}',${idx})"
+        class="absolute top-1 right-1 bg-gray-700 text-amber-400 rounded-full w-6 h-6 text-xs flex items-center justify-center leading-none">✕</button>
+    </div>`).join('');
+}
+
+async function uploadRefPhoto(itemId, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const prog = document.getElementById(`refUploadProg_${itemId}`);
+  if (prog) prog.classList.remove('hidden');
+  const base64 = await compressImage(file, 1024);
+  const result = await api('uploadRefPhoto', null, { itemId, base64, fileName: file.name });
+  if (prog) prog.classList.add('hidden');
+  input.value = '';
+  if (result.error) { showToast('上傳失敗：' + result.error, 'error'); return; }
+  const it = state.items.find(x => String(x['工作ID']) === String(itemId));
+  if (it) {
+    it['參考圖片'] = (it['參考圖片'] ? it['參考圖片'] + ',' : '') + result.url;
+    const grid = document.getElementById(`refPhotoGrid_${itemId}`);
+    if (grid) grid.innerHTML = renderRefPhotoGrid(it['參考圖片'], itemId);
+    saveCache();
+  }
+  showToast('參考圖片已上傳 ✓');
+}
+
+async function deleteRefPhoto(itemId, idx) {
+  const it = state.items.find(x => String(x['工作ID']) === String(itemId));
+  if (!it) return;
+  const urls = String(it['參考圖片'] || '').split(',').filter(u => u.trim());
+  urls.splice(idx, 1);
+  it['參考圖片'] = urls.join(',');
+  const grid = document.getElementById(`refPhotoGrid_${itemId}`);
+  if (grid) grid.innerHTML = renderRefPhotoGrid(it['參考圖片'], itemId);
+  await api('update', '工作項目', { key: itemId, data: { '參考圖片': it['參考圖片'] } });
   saveCache();
 }
 
@@ -1011,6 +1073,7 @@ async function saveNewItems() {
     '完工日期':   '',
     '收款狀態':   '未收款',
     '完工照片':   '',
+    '參考圖片':   '',
     '請款單狀態': '',
     ...t,
   }));
