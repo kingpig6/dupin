@@ -50,9 +50,22 @@ async function api(action, sheet, extra = {}) {
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    // 登入逾期 / 權限不足的統一處理
-    if (data && data.error === 'LOGIN_REQUIRED' || (data && data.error === 'TOKEN_INVALID')) {
+    if (data && (data.error === 'LOGIN_REQUIRED' || data.error === 'TOKEN_INVALID')) {
+      // token 過期：先靜默刷新，成功就重試，失敗才登出
+      const refreshed = await silentTokenRefresh();
+      if (refreshed) {
+        payload.idToken = auth.idToken;
+        const res2 = await fetch(API_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
+        const data2 = await res2.json();
+        if (data2 && (data2.error === 'LOGIN_REQUIRED' || data2.error === 'TOKEN_INVALID')) {
+          logout('登入已逾期，請重新登入');
+        } else if (data2 && data2.error === 'FORBIDDEN') {
+          showToast('權限不足，此操作僅限管理員', 'error');
+        }
+        return data2;
+      }
       logout('登入已逾期，請重新登入');
+      return data;
     } else if (data && data.error === 'FORBIDDEN') {
       showToast('權限不足，此操作僅限管理員', 'error');
     }
@@ -61,6 +74,37 @@ async function api(action, sheet, extra = {}) {
     showToast('網路錯誤，請確認 API_URL 已設定', 'error');
     return { error: e.message };
   }
+}
+
+function silentTokenRefresh() {
+  return new Promise(resolve => {
+    if (!window.google || !google.accounts || !GOOGLE_CLIENT_ID) { resolve(false); return; }
+    const timeout = setTimeout(() => resolve(false), 5000);
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: response => {
+        clearTimeout(timeout);
+        auth.idToken = response.credential;
+        scheduleTokenRefresh();
+        resolve(true);
+      },
+      auto_select: true,
+    });
+    google.accounts.id.prompt(notification => {
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+        clearTimeout(timeout);
+        resolve(false);
+      }
+    });
+  });
+}
+
+function scheduleTokenRefresh() {
+  clearTimeout(window._tokenRefreshTimer);
+  window._tokenRefreshTimer = setTimeout(() => {
+    if (!auth.idToken) return;
+    silentTokenRefresh();
+  }, 50 * 60 * 1000); // 50 分鐘後靜默刷新（token 1 小時到期前）
 }
 
 // ── 離線偵測 ────────────────────────────────
@@ -1800,6 +1844,7 @@ async function handleCredentialResponse(response) {
     auth.email = r.email; auth.name = r.name; auth.role = r.role;
     localStorage.setItem('dupin_auth', JSON.stringify({ email: auth.email, name: auth.name, role: auth.role }));
     document.querySelector('nav.no-print')?.classList.remove('hidden');
+    scheduleTokenRefresh();
     loadAll();
   } else {
     auth = { idToken: null, email: null, name: null, role: null };
