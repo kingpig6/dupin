@@ -603,7 +603,7 @@ function editItem(id) {
       <span class="text-xs text-gray-400">金額：<span id="ei_amt" class="text-amber-400">$${Number(it['金額']).toLocaleString()}</span></span>
       <div class="flex gap-2">
         <button onclick="showView('customerDetail',state.viewCustomer)" class="btn btn-ghost text-sm px-3">取消</button>
-        <button onclick="saveItem('${id}')" class="btn btn-primary text-sm px-3">儲存</button>
+        <button onclick="saveItem('${id}',this)" class="btn btn-primary text-sm px-3">儲存</button>
       </div>
     </div>
     <div class="border-t border-gray-600 pt-3 mb-3">
@@ -639,7 +639,8 @@ function editItem(id) {
     </button>` : ''}`;
 }
 
-async function saveItem(id) {
+async function saveItem(id, btn) {
+  if (btn && btn.disabled) return;
   const it = state.items.find(x => String(x['工作ID']) === String(id));
   if (!it) return;
   const qty   = Number(document.getElementById('ei_qty').value)   || 1;
@@ -667,8 +668,10 @@ async function saveItem(id) {
   Object.assign(it, data);
   showView('customerDetail', state.viewCustomer);
   saveCache();
-  await api('update', '工作項目', { key: id, data });
-  showToast('品項已更新 ✓');
+  await withBtn(btn, async () => {
+    await api('update', '工作項目', { key: id, data });
+    showToast('品項已更新 ✓');
+  });
 }
 
 async function deleteItem(id) {
@@ -886,7 +889,7 @@ function renderNewOrder() {
       </select>
       <div id="addCusPanel" class="hidden mt-2 flex gap-2">
         <input id="newCusName" placeholder="輸入新客戶名稱" class="flex-1"/>
-        <button type="button" onclick="confirmAddCustomer()" class="btn btn-primary text-sm px-3 shrink-0">確認</button>
+        <button type="button" onclick="confirmAddCustomer(this)" class="btn btn-primary text-sm px-3 shrink-0">確認</button>
       </div>
     </div>
     <div>
@@ -904,7 +907,7 @@ function renderNewOrder() {
       </div>
     </div>
 
-    <button class="btn btn-primary mt-2" onclick="saveNewItems()">建立工作項目</button>
+    <button class="btn btn-primary mt-2" onclick="saveNewItems(this)">建立工作項目</button>
   </div>`;
 }
 
@@ -1002,7 +1005,8 @@ function toggleAddCustomer() {
   }
 }
 
-async function confirmAddCustomer() {
+async function confirmAddCustomer(btn) {
+  if (btn && btn.disabled) return;
   const input = document.getElementById('newCusName');
   const name = input.value.trim();
   if (!name) { input.focus(); return; }
@@ -1027,11 +1031,14 @@ async function confirmAddCustomer() {
   document.getElementById('addCusPanel').classList.add('hidden');
 
   // 寫入試算表
-  await api('add', '客戶', { data: { '客戶名稱': name } });
-  showToast(`已新增客戶：${name} ✓`);
+  await withBtn(btn, async () => {
+    await api('add', '客戶', { data: { '客戶名稱': name } });
+    showToast(`已新增客戶：${name} ✓`);
+  });
 }
 
-async function saveNewItems() {
+async function saveNewItems(btn) {
+  if (btn && btn.disabled) return;
   const customer = document.getElementById('o_cus').value;
   const openDate = document.getElementById('o_date').value;
   if (!customer) { showToast('請選擇客戶'); return; }
@@ -1078,17 +1085,15 @@ async function saveNewItems() {
     ...t,
   }));
 
-  showLoading(true);
-  const r = await api('addBatch', '工作項目', { rows: payloadRows });
-  showLoading(false);
-  if (r.error) { showToast('建立失敗：' + r.error, 'error'); return; }
-
-  // 樂觀更新本地狀態，免去重新抓全部資料
-  state.items.push(...payloadRows);
-  saveCache();
-  itemRowCount = 1;
-  showView('orders');
-  showToast(`已建立 ${payloadRows.length} 件工作項目 ✓`);
+  await withBtn(btn, async () => {
+    const r = await api('addBatch', '工作項目', { rows: payloadRows });
+    if (r.error) { showToast('建立失敗：' + r.error, 'error'); return; }
+    state.items.push(...payloadRows);
+    saveCache();
+    itemRowCount = 1;
+    showView('orders');
+    showToast(`已建立 ${payloadRows.length} 件工作項目 ✓`);
+  });
 }
 
 // ── 語音開單 ────────────────────────────────
@@ -1329,14 +1334,15 @@ function renderCustomerForm() {
       <label class="section-title">備註</label>
       <textarea id="c_note" rows="2">${c['備註']||''}</textarea>
     </div>
-    <button class="btn btn-primary mt-2" onclick="saveCustomer()">
+    <button class="btn btn-primary mt-2" onclick="saveCustomer(this)">
       ${state.editCustomer ? '儲存修改' : '新增客戶'}
     </button>
     ${state.editCustomer ? `<button class="btn btn-danger" onclick="deleteCustomer('${c['客戶名稱']}')">刪除客戶</button>` : ''}
   </div>`;
 }
 
-async function saveCustomer() {
+async function saveCustomer(btn) {
+  if (btn && btn.disabled) return;
   const data = {
     '客戶名稱': document.getElementById('c_name').value.trim(),
     '聯絡人':   document.getElementById('c_contact').value.trim(),
@@ -1346,16 +1352,17 @@ async function saveCustomer() {
     '備註':     document.getElementById('c_note').value.trim(),
   };
   if (!data['客戶名稱']) { showToast('請填客戶名稱'); return; }
-  showLoading(true);
-  if (state.editCustomer) {
-    await api('update', '客戶', { key: data['客戶名稱'], data });
-  } else {
-    await api('add', '客戶', { data });
-  }
-  state.editCustomer = null;
-  await loadAll();
-  showView('customers');
-  showToast('已儲存 ✓');
+  await withBtn(btn, async () => {
+    if (state.editCustomer) {
+      await api('update', '客戶', { key: data['客戶名稱'], data });
+    } else {
+      await api('add', '客戶', { data });
+    }
+    state.editCustomer = null;
+    await loadAll();
+    showView('customers');
+    showToast('已儲存 ✓');
+  });
 }
 
 async function deleteCustomer(name) {
@@ -1410,7 +1417,7 @@ function renderStats() {
       </div>
       <input id="exp_amt" type="number" placeholder="金額 *"/>
       <input id="exp_note" placeholder="備註（選填）"/>
-      <button class="btn btn-primary" onclick="saveExpense()">記錄支出</button>
+      <button class="btn btn-primary" onclick="saveExpense(this)">記錄支出</button>
     </div>
   </div>` : ''}
 
@@ -1776,30 +1783,28 @@ async function confirmPayWorker(name, ids, btn) {
   }
 }
 
-async function saveExpense() {
+async function saveExpense(btn) {
+  if (btn && btn.disabled) return;
   const date = document.getElementById('exp_date').value;
   const cat  = document.getElementById('exp_cat').value;
   const amt  = Number(document.getElementById('exp_amt').value);
   const note = document.getElementById('exp_note').value.trim();
   if (!amt) { showToast('請填金額'); return; }
-  // 防止重複送出
-  const btn = document.querySelector('[onclick="saveExpense()"]');
-  if (btn && btn.disabled) return;
-  if (btn) { btn.disabled = true; btn.textContent = '記錄中…'; }
   const data = { '支出ID': 'E' + Date.now(), '日期': date, '類別': cat, '金額': amt, '備註': note };
-  const r = await api('add', '支出記錄', { data });
-  if (btn) { btn.disabled = false; btn.textContent = '記錄支出'; }
-  if (r.error) { showToast('記錄失敗：' + r.error, 'error'); return; }
-  state.expenses.push(data);
-  saveCache();
-  document.getElementById('exp_amt').value = '';
-  document.getElementById('exp_note').value = '';
-  showToast('已記錄支出 ✓');
-  const pEl = document.getElementById('profitReport');
-  if (pEl && !pEl.classList.contains('hidden')) {
-    const { from, to } = getStatsFilter();
-    pEl.innerHTML = renderProfitReport(from, to);
-  }
+  await withBtn(btn, async () => {
+    const r = await api('add', '支出記錄', { data });
+    if (r.error) { showToast('記錄失敗：' + r.error, 'error'); return; }
+    state.expenses.push(data);
+    saveCache();
+    document.getElementById('exp_amt').value = '';
+    document.getElementById('exp_note').value = '';
+    showToast('已記錄支出 ✓');
+    const pEl = document.getElementById('profitReport');
+    if (pEl && !pEl.classList.contains('hidden')) {
+      const { from, to } = getStatsFilter();
+      pEl.innerHTML = renderProfitReport(from, to);
+    }
+  });
 }
 
 async function deleteExpense(expId, btn) {
@@ -1887,6 +1892,18 @@ function compressImage(file, maxPx) {
 
 function showLoading(on) {
   state.loading = on;
+}
+
+// 通用按鈕防呆：送出期間 disable + 改文字，完成後還原
+async function withBtn(btn, fn) {
+  if (!btn || btn.disabled) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '處理中…';
+  try { await fn(); } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 function showToast(msg, type = 'success') {
