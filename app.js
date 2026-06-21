@@ -28,6 +28,7 @@ let state = {
   customers: [],
   workers: [],
   workerRates: {},    // { 姓名: 抽成比例 }，如 { '李安': 0.1 }
+  expenses: [],       // 支出記錄
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
   viewSection: null,  // 從哪個區塊進入（active/done/invoiced/paid）
@@ -76,6 +77,7 @@ function saveCache() {
       settings: state.settings,
       workers: state.workers,
       workerRates: state.workerRates,
+      expenses: state.expenses,
       ts: Date.now(),
     }));
   } catch(e) {}
@@ -91,6 +93,7 @@ function loadCache() {
     state.settings    = cache.settings    || {};
     state.workers     = cache.workers     || [];
     state.workerRates = cache.workerRates || {};
+    state.expenses    = cache.expenses    || [];
     return true;
   } catch(e) { return false; }
 }
@@ -104,15 +107,17 @@ async function loadAll() {
     showLoading(true);
   }
 
-  const [wi, c, s, w] = await Promise.all([
+  const [wi, c, s, w, exp] = await Promise.all([
     api('getAll', '工作項目'),
     api('getAll', '客戶'),
     api('getSettings'),
     api('getAll', '員工'),
+    api('getAll', '支出記錄'),
   ]);
-  if (wi.data) state.items     = wi.data.map(normalizeItem);
-  if (c.data)  state.customers = c.data;
-  if (s.data)  state.settings  = s.data;
+  if (wi.data)  state.items     = wi.data.map(normalizeItem);
+  if (c.data)   state.customers = c.data;
+  if (s.data)   state.settings  = s.data;
+  if (exp.data) state.expenses  = exp.data;
   if (w.data) {
     state.workers = w.data.map(r => r['姓名'] || '').filter(Boolean);
     state.workerRates = {};
@@ -134,9 +139,13 @@ function normalizeItem(it) {
     開單日期:   formatDate(it['開單日期']),
     交貨期限:   formatDate(it['交貨期限']),
     完工日期:   formatDate(it['完工日期']),
-    進度:       it['進度']       || '待施工',
-    收款狀態:   it['收款狀態']   || '未收款',
-    請款單狀態: it['請款單狀態'] || '',
+    進度:         it['進度']         || '待施工',
+    收款狀態:     it['收款狀態']     || '未收款',
+    請款單狀態:   it['請款單狀態']   || '',
+    費用類型:     it['費用類型']     || '',
+    費用金額:     Number(it['費用金額']) || 0,
+    費用支付狀態: it['費用支付狀態'] || '',
+    費用支付日期: formatDate(it['費用支付日期']),
   };
 }
 
@@ -589,6 +598,12 @@ async function saveItem(id) {
     '負責師傅': document.getElementById('ei_worker').value.trim(),
     '費用類型': document.getElementById('ei_fee_type').value,
     '費用金額': Number(document.getElementById('ei_fee_amt').value) || 0,
+    '費用支付狀態': (() => {
+      const newType = document.getElementById('ei_fee_type').value;
+      if (!newType) return '';
+      if (it['費用支付狀態'] === '已支付') return '已支付';
+      return '未支付';
+    })(),
     '備註':     document.getElementById('ei_note').value.trim(),
   };
   Object.assign(it, data);
@@ -933,9 +948,11 @@ async function saveNewItems() {
       '交貨期限': document.getElementById(`r${idx}_deadline`)?.value        || '',
       '車號':     document.getElementById(`r${idx}_plate`)?.value.trim()    || '',
       '負責師傅': document.getElementById(`r${idx}_worker`)?.value.trim()   || '',
-      '費用類型': document.getElementById(`r${idx}_fee_type`)?.value        || '',
-      '費用金額': Number(document.getElementById(`r${idx}_fee_amt`)?.value) || 0,
-      '備註':     document.getElementById(`r${idx}_note`)?.value.trim()     || '',
+      '費用類型':     document.getElementById(`r${idx}_fee_type`)?.value        || '',
+      '費用金額':     Number(document.getElementById(`r${idx}_fee_amt`)?.value) || 0,
+      '費用支付狀態': document.getElementById(`r${idx}_fee_type`)?.value ? '未支付' : '',
+      '費用支付日期': '',
+      '備註':         document.getElementById(`r${idx}_note`)?.value.trim()     || '',
     });
   }
   if (!toSave.length) { showToast('請至少填一個品名'); return; }
@@ -1272,6 +1289,25 @@ function onEditFeeTypeChange() {
 function renderStats() {
   const thisYear = new Date().getFullYear();
   return `
+  ${isAdmin() ? `
+  <div class="card mb-4">
+    <button type="button" onclick="this.nextElementSibling.classList.toggle('hidden')" class="w-full flex items-center justify-between">
+      <span class="section-title mb-0">＋ 記一筆支出</span>
+      <span class="text-xs text-gray-400">▼</span>
+    </button>
+    <div class="hidden mt-3 flex flex-col gap-2">
+      <div class="grid grid-cols-2 gap-2">
+        <input id="exp_date" type="date" value="${new Date().toISOString().slice(0,10)}"/>
+        <select id="exp_cat">
+          <option>固定支出</option><option>耗材</option><option>外包</option><option>其他</option>
+        </select>
+      </div>
+      <input id="exp_amt" type="number" placeholder="金額 *"/>
+      <input id="exp_note" placeholder="備註（選填）"/>
+      <button class="btn btn-primary" onclick="saveExpense()">記錄支出</button>
+    </div>
+  </div>` : ''}
+
   <div class="card mb-4">
     <div class="section-title">自訂查詢</div>
     <div class="grid grid-cols-2 gap-2 mb-2">
@@ -1287,6 +1323,7 @@ function renderStats() {
     <button class="btn btn-primary w-full" onclick="queryStats()">查詢</button>
   </div>
   <div id="statsResult"></div>
+  <div id="profitSummary"></div>
 
   <div class="flex items-center justify-between cursor-pointer py-2 mt-2" onclick="toggleStatsCus()">
     <span class="section-title mb-0">各客戶累計</span>
@@ -1294,27 +1331,23 @@ function renderStats() {
   </div>
   <div id="statsByCustomer" class="hidden"></div>
 
-  <div class="flex items-center justify-between cursor-pointer py-2 mt-2" onclick="toggleStatsWorker()">
+  <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleStatsWorker()">
     <span class="section-title mb-0">施工人員業績</span>
     <span id="arrow-statsWorker" class="text-gray-400 text-lg">▼</span>
   </div>
   <div id="statsByWorker" class="hidden"></div>
 
-  <div class="card mt-4">
-    <div class="section-title">人員費用查詢</div>
-    <div class="grid grid-cols-2 gap-2 mb-2">
-      <div><label class="text-xs text-gray-400">起始日</label>
-        <input id="wf_from" type="date" value="${thisYear}-01-01"/></div>
-      <div><label class="text-xs text-gray-400">結束日</label>
-        <input id="wf_to" type="date" value="${thisYear}-12-31"/></div>
-    </div>
-    <select id="wf_worker" class="mb-3">
-      <option value="">-- 選擇師傅 --</option>
-      ${state.workers.map(w => `<option value="${w}">${w}</option>`).join('')}
-    </select>
-    <button class="btn btn-primary w-full" onclick="queryWorkerFee()">查詢應付費用</button>
+  <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleWorkerFeePending()">
+    <span class="section-title mb-0">人員費用－待支付</span>
+    <span id="arrow-workerFeePending" class="text-gray-400 text-lg">▼</span>
   </div>
-  <div id="workerFeeResult" class="mt-3"></div>`;
+  <div id="workerFeePending" class="hidden mb-2"></div>
+
+  <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleWorkerFeePaid()">
+    <span class="section-title mb-0">人員費用－已支付</span>
+    <span id="arrow-workerFeePaid" class="text-gray-400 text-lg">▼</span>
+  </div>
+  <div id="workerFeePaid" class="hidden mb-4"></div>`;
 }
 
 function toggleStatsCus() {
@@ -1336,6 +1369,25 @@ function toggleStatsWorker() {
   if (!el.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
     el.innerHTML = renderStatsByWorker(from, to);
+  }
+}
+
+function toggleWorkerFeePending() {
+  const el = document.getElementById('workerFeePending');
+  const ar = document.getElementById('arrow-workerFeePending');
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) el.innerHTML = renderWorkerFeePending();
+}
+
+function toggleWorkerFeePaid() {
+  const el = document.getElementById('workerFeePaid');
+  const ar = document.getElementById('arrow-workerFeePaid');
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) {
+    const { from, to } = getStatsFilter();
+    el.innerHTML = renderWorkerFeePaid(from, to);
   }
 }
 
@@ -1405,39 +1457,182 @@ function renderStatsByWorker(from, to) {
     }).join('');
 }
 
-function queryWorkerFee() {
-  const worker = document.getElementById('wf_worker').value;
-  const from   = document.getElementById('wf_from').value;
-  const to     = document.getElementById('wf_to').value;
-  if (!worker) { showToast('請選擇師傅'); return; }
-
-  const filtered = state.items.filter(it => {
-    const d = it['完工日期'] || it['開單日期'] || '';
-    return it['負責師傅'] === worker && it['費用類型'] && d && d >= from && d <= to;
+function renderWorkerFeePending() {
+  const pending = state.items.filter(it =>
+    it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && Number(it['費用金額']) > 0
+  );
+  if (!pending.length) return '<p class="text-gray-500 text-sm mb-4">無待支付費用</p>';
+  const byWorker = {};
+  pending.forEach(it => {
+    const w = it['負責師傅'] || '(未指定)';
+    if (!byWorker[w]) byWorker[w] = [];
+    byWorker[w].push(it);
   });
-
-  const totalFee = filtered.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
-
-  const rows = filtered.map(it => {
-    const fee = Number(it['費用金額'] || 0);
-    const d   = it['完工日期'] || it['開單日期'] || '';
-    return `<div class="flex justify-between text-sm py-1 border-b border-gray-700">
-      <div>
-        <span class="text-gray-300">${d} · ${it['客戶']||''} · ${it['品名']||''}</span>
-        <span class="ml-2 text-xs text-gray-500">${it['費用類型']||''}</span>
+  return Object.entries(byWorker).map(([name, items], idx) => {
+    const total = items.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+    const ids   = items.map(it => String(it['工作ID']));
+    const detailId = `wfp_${idx}`;
+    const rows = items.map(it => `
+      <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+        <span class="text-gray-300">${it['完工日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
+        <span class="text-amber-400 shrink-0 ml-2">${it['費用類型']} $${Number(it['費用金額']).toLocaleString()}</span>
+      </div>`).join('');
+    const idsJson = JSON.stringify(ids).replace(/"/g, '&quot;');
+    return `
+    <div class="card mb-2">
+      <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
+        <div>
+          <div class="font-semibold">${name}</div>
+          <div class="text-xs text-gray-400">${items.length} 件待支付</div>
+        </div>
+        <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
       </div>
-      <span class="text-amber-400 shrink-0 ml-2">$${fee.toLocaleString()}</span>
+      <div id="${detailId}" class="hidden mt-2">
+        ${rows}
+        <button class="btn btn-primary w-full mt-3"
+          onclick="confirmPayWorker('${name}', JSON.parse(this.dataset.ids), this)"
+          data-ids="${idsJson}">支付全部</button>
+      </div>
     </div>`;
   }).join('');
+}
 
-  document.getElementById('workerFeeResult').innerHTML = `
-    <div class="card">
-      <div class="flex justify-between mb-3">
-        <span class="text-gray-400">${worker}（${filtered.length} 件）</span>
-        <span class="text-2xl font-bold text-amber-400">$${totalFee.toLocaleString()}</span>
+function renderWorkerFeePaid(from, to) {
+  const paid = state.items.filter(it => {
+    const d = it['費用支付日期'] || '';
+    return it['費用支付狀態'] === '已支付' && (!from || (d >= from && d <= to));
+  });
+  if (!paid.length) return '<p class="text-gray-500 text-sm mb-4">無已支付費用</p>';
+  const byWorker = {};
+  paid.forEach(it => {
+    const w = it['負責師傅'] || '(未指定)';
+    if (!byWorker[w]) byWorker[w] = [];
+    byWorker[w].push(it);
+  });
+  return Object.entries(byWorker).map(([name, items], idx) => {
+    const total = items.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+    const detailId = `wfpaid_${idx}`;
+    const rows = items.map(it => `
+      <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+        <span class="text-gray-300">${it['費用支付日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
+        <span class="text-amber-400 shrink-0 ml-2">$${Number(it['費用金額']).toLocaleString()}</span>
+      </div>`).join('');
+    return `
+    <div class="card mb-2">
+      <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
+        <div>
+          <div class="font-semibold">${name}</div>
+          <div class="text-xs text-gray-400">${items.length} 件已支付</div>
+        </div>
+        <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
       </div>
-      ${rows || '<p class="text-gray-500 text-sm">無符合資料</p>'}
+      <div id="${detailId}" class="hidden mt-2">${rows}</div>
     </div>`;
+  }).join('');
+}
+
+function renderProfitSummary(from, to) {
+  const revenue = state.items
+    .filter(it => it['進度'] === '完成' && it['完工日期'] >= from && it['完工日期'] <= to)
+    .reduce((s, it) => s + Number(it['金額'] || 0), 0);
+  const personnelFees = state.items
+    .filter(it => it['費用支付狀態'] === '已支付' && it['費用支付日期'] >= from && it['費用支付日期'] <= to)
+    .reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  const expItems = (state.expenses || []).filter(e => {
+    const d = String(e['日期'] || '').slice(0, 10);
+    return d >= from && d <= to;
+  });
+  const totalExp = expItems.reduce((s, e) => s + Number(e['金額'] || 0), 0);
+  const byCategory = {};
+  expItems.forEach(e => {
+    const cat = e['類別'] || '其他';
+    byCategory[cat] = (byCategory[cat] || 0) + Number(e['金額'] || 0);
+  });
+  const profit = revenue - personnelFees - totalExp;
+  const profitColor = profit >= 0 ? 'text-green-400' : 'text-red-400';
+  return `
+  <div class="card mb-4">
+    <div class="section-title">盈虧摘要</div>
+    <div class="flex justify-between py-2 border-b border-gray-700">
+      <span class="text-gray-300">收入（完工）</span>
+      <span class="text-amber-400">$${revenue.toLocaleString()}</span>
+    </div>
+    <div class="flex justify-between py-2 border-b border-gray-700">
+      <span class="text-gray-300">人員費用（已支付）</span>
+      <span class="text-red-400">− $${personnelFees.toLocaleString()}</span>
+    </div>
+    <div class="flex justify-between py-2 border-b border-gray-700 cursor-pointer" onclick="document.getElementById('expCatDetail').classList.toggle('hidden')">
+      <span class="text-gray-300">公司支出</span>
+      <span class="text-red-400">− $${totalExp.toLocaleString()} ▾</span>
+    </div>
+    <div id="expCatDetail" class="hidden pl-3 pb-2">
+      ${Object.entries(byCategory).map(([cat, amt]) => `
+        <div class="flex justify-between text-sm py-1 text-gray-400">
+          <span>${cat}</span><span>$${amt.toLocaleString()}</span>
+        </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無支出記錄</p>'}
+    </div>
+    <div class="flex justify-between pt-3">
+      <span class="font-bold">淨利</span>
+      <span class="text-xl font-bold ${profitColor}">$${profit.toLocaleString()}</span>
+    </div>
+  </div>`;
+}
+
+async function confirmPayWorker(name, ids, btn) {
+  if (btn.dataset.confirmed !== '1') {
+    btn.dataset.confirmed = '1';
+    btn.textContent = '確定支付？再按一次';
+    btn.classList.remove('bg-blue-600');
+    btn.classList.add('bg-amber-600');
+    setTimeout(() => {
+      if (btn.dataset.confirmed === '1') {
+        btn.dataset.confirmed = '';
+        btn.textContent = '支付全部';
+        btn.classList.remove('bg-amber-600');
+      }
+    }, 3000);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '支付中…';
+  const today = new Date().toISOString().slice(0, 10);
+  for (const id of ids) {
+    await api('update', '工作項目', { key: id, data: { '費用支付狀態': '已支付', '費用支付日期': today } });
+    const it = state.items.find(x => String(x['工作ID']) === String(id));
+    if (it) { it['費用支付狀態'] = '已支付'; it['費用支付日期'] = today; }
+  }
+  saveCache();
+  showToast(`已支付 ${name} 費用 ✓`);
+  const pendingEl = document.getElementById('workerFeePending');
+  if (pendingEl && !pendingEl.classList.contains('hidden')) pendingEl.innerHTML = renderWorkerFeePending();
+  const paidEl = document.getElementById('workerFeePaid');
+  if (paidEl && !paidEl.classList.contains('hidden')) {
+    const { from, to } = getStatsFilter();
+    paidEl.innerHTML = renderWorkerFeePaid(from, to);
+  }
+}
+
+async function saveExpense() {
+  const date = document.getElementById('exp_date').value;
+  const cat  = document.getElementById('exp_cat').value;
+  const amt  = Number(document.getElementById('exp_amt').value);
+  const note = document.getElementById('exp_note').value.trim();
+  if (!amt) { showToast('請填金額'); return; }
+  const data = { '支出ID': 'E' + Date.now(), '日期': date, '類別': cat, '金額': amt, '備註': note };
+  showLoading(true);
+  const r = await api('add', '支出記錄', { data });
+  showLoading(false);
+  if (r.error) { showToast('記錄失敗：' + r.error, 'error'); return; }
+  state.expenses.push(data);
+  saveCache();
+  document.getElementById('exp_amt').value = '';
+  document.getElementById('exp_note').value = '';
+  showToast('已記錄支出 ✓');
+  const pEl = document.getElementById('profitSummary');
+  if (pEl && pEl.innerHTML) {
+    const { from, to } = getStatsFilter();
+    pEl.innerHTML = renderProfitSummary(from, to);
+  }
 }
 
 function getStatsFilter() {
@@ -1464,7 +1659,7 @@ function queryStats() {
   ).join('');
 
   document.getElementById('statsResult').innerHTML = `
-    <div class="card">
+    <div class="card mb-3">
       <div class="flex justify-between mb-3">
         <span class="text-gray-400">查詢結果（${filtered.length} 件）</span>
         <span class="text-2xl font-bold text-amber-400">$${total.toLocaleString()}</span>
@@ -1472,11 +1667,14 @@ function queryStats() {
       ${detail || '<p class="text-gray-500 text-sm">無符合資料</p>'}
     </div>`;
 
-  // 同步更新各客戶累計與施工人員業績（若已展開）
+  document.getElementById('profitSummary').innerHTML = renderProfitSummary(from, to);
+
   const cuEl = document.getElementById('statsByCustomer');
   if (cuEl && !cuEl.classList.contains('hidden')) cuEl.innerHTML = renderStatsByCustomer(from, to);
   const wkEl = document.getElementById('statsByWorker');
   if (wkEl && !wkEl.classList.contains('hidden')) wkEl.innerHTML = renderStatsByWorker(from, to);
+  const paidEl = document.getElementById('workerFeePaid');
+  if (paidEl && !paidEl.classList.contains('hidden')) paidEl.innerHTML = renderWorkerFeePaid(from, to);
 }
 
 // ── 工具函式 ────────────────────────────────
