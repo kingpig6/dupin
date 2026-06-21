@@ -69,7 +69,7 @@ function handleRequest(e) {
     if (clientId) {
       const roleInfo = user ? getUserRole(user.email) : null;
       const role = roleInfo ? roleInfo.role : null;
-      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto'];
+      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto'];
       if (writeActions.indexOf(action) >= 0) {
         if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
         if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
@@ -91,6 +91,7 @@ function handleRequest(e) {
       case 'generateInvoice': result = generateInvoicePDF(body.itemIds, body.type); break;
       case 'getPDFUrl':       result = getPDFUrl(body.itemId, body.type); break;
       case 'uploadItemPhoto': result = uploadItemPhoto(body.itemId, body.base64, body.fileName); break;
+      case 'uploadRefPhoto':  result = uploadRefPhoto(body.itemId, body.base64, body.fileName);  break;
       case 'parseVoice':      result = parseVoiceWithAI(body.text, body.customers); break;
       case 'parseText':       result = parseTextWithAI(body.text, body.customers); break;
       default:                result = { error: 'Unknown action: ' + action };
@@ -627,6 +628,42 @@ function uploadItemPhoto(itemId, base64, fileName) {
     if (String(rows[i][0]) === String(itemId)) {
       const existing = rows[i][photoCol] ? rows[i][photoCol] + ',' : '';
       sheet.getRange(i + 1, photoCol + 1).setValue(existing + imageUrl);
+      break;
+    }
+  }
+  return { success: true, url: imageUrl };
+}
+
+// ── 上傳品項參考圖片 ─────────────────────────
+function uploadRefPhoto(itemId, base64, fileName) {
+  const matches = base64.match(/^data:(.+);base64,(.+)$/);
+  if (!matches) return { error: '圖片格式錯誤' };
+  const mimeType = matches[1];
+  const data = matches[2];
+
+  const root = getRootFolder();
+  const pr = root.getFoldersByName('參考圖片');
+  const photoRoot = pr.hasNext() ? pr.next() : root.createFolder('參考圖片');
+  const of = photoRoot.getFoldersByName(String(itemId));
+  const itemFolder = of.hasNext() ? of.next() : photoRoot.createFolder(String(itemId));
+
+  const blob = Utilities.newBlob(Utilities.base64Decode(data), mimeType, fileName || 'ref.jpg');
+  const file = itemFolder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  const imageUrl = `https://lh3.googleusercontent.com/d/${file.getId()}`;
+
+  const sheet = ss.getSheetByName('工作項目');
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  let refCol = headers.indexOf('參考圖片');
+  if (refCol === -1) {
+    refCol = headers.length;
+    sheet.getRange(1, refCol + 1).setValue('參考圖片');
+  }
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(itemId)) {
+      const existing = rows[i][refCol] ? rows[i][refCol] + ',' : '';
+      sheet.getRange(i + 1, refCol + 1).setValue(existing + imageUrl);
       break;
     }
   }
