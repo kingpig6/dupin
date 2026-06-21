@@ -1310,11 +1310,12 @@ function renderStats() {
 
   <div class="card mb-4">
     <div class="section-title">自訂查詢</div>
-    <div class="grid grid-cols-2 gap-2 mb-2">
-      <div><label class="text-xs text-gray-400">起始日</label>
+    <div class="flex items-end gap-2 mb-2">
+      <div class="flex-1"><label class="text-xs text-gray-400">起始日</label>
         <input id="s_from" type="date" value="${thisYear}-01-01"/></div>
-      <div><label class="text-xs text-gray-400">結束日</label>
+      <div class="flex-1"><label class="text-xs text-gray-400">結束日</label>
         <input id="s_to" type="date" value="${thisYear}-12-31"/></div>
+      <button class="btn btn-ghost text-sm px-3 shrink-0 mb-0" style="height:38px" onclick="setThisMonth()">本月</button>
     </div>
     <select id="s_cus" class="mb-3">
       <option value="">全部客戶</option>
@@ -1323,7 +1324,13 @@ function renderStats() {
     <button class="btn btn-primary w-full" onclick="queryStats()">查詢</button>
   </div>
   <div id="statsResult"></div>
-  <div id="profitSummary"></div>
+
+  ${isAdmin() ? `
+  <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleProfitReport()">
+    <span class="section-title mb-0">損益報告（老闆專屬）</span>
+    <span id="arrow-profitReport" class="text-gray-400 text-lg">▼</span>
+  </div>
+  <div id="profitReport" class="hidden mb-3"></div>` : ''}
 
   <div class="flex items-center justify-between cursor-pointer py-2 mt-2" onclick="toggleStatsCus()">
     <span class="section-title mb-0">各客戶累計</span>
@@ -1369,6 +1376,28 @@ function toggleStatsWorker() {
   if (!el.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
     el.innerHTML = renderStatsByWorker(from, to);
+  }
+}
+
+function setThisMonth() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const last = new Date(y, now.getMonth() + 1, 0).getDate();
+  document.getElementById('s_from').value = `${y}-${m}-01`;
+  document.getElementById('s_to').value   = `${y}-${m}-${String(last).padStart(2,'0')}`;
+  queryStats();
+}
+
+function toggleProfitReport() {
+  const el = document.getElementById('profitReport');
+  const ar = document.getElementById('arrow-profitReport');
+  if (!el) return;
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) {
+    const { from, to } = getStatsFilter();
+    el.innerHTML = renderProfitReport(from, to);
   }
 }
 
@@ -1531,49 +1560,77 @@ function renderWorkerFeePaid(from, to) {
   }).join('');
 }
 
-function renderProfitSummary(from, to) {
-  const revenue = state.items
-    .filter(it => it['進度'] === '完成' && it['完工日期'] >= from && it['完工日期'] <= to)
-    .reduce((s, it) => s + Number(it['金額'] || 0), 0);
-  const personnelFees = state.items
-    .filter(it => it['費用支付狀態'] === '已支付' && it['費用支付日期'] >= from && it['費用支付日期'] <= to)
-    .reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+function renderProfitReport(from, to) {
+  // ── 收入：完工項目 ──
+  const incomeItems = state.items.filter(it =>
+    it['進度'] === '完成' && it['完工日期'] >= from && it['完工日期'] <= to
+  ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
+  const revenue = incomeItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+
+  // ── 人員費用：已支付 ──
+  const feeItems = state.items.filter(it =>
+    it['費用支付狀態'] === '已支付' && it['費用支付日期'] >= from && it['費用支付日期'] <= to
+  ).sort((a, b) => (a['費用支付日期'] > b['費用支付日期'] ? -1 : 1));
+  const totalFees = feeItems.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+
+  // ── 公司支出 ──
   const expItems = (state.expenses || []).filter(e => {
     const d = String(e['日期'] || '').slice(0, 10);
     return d >= from && d <= to;
-  });
+  }).sort((a, b) => (String(a['日期']) > String(b['日期']) ? -1 : 1));
   const totalExp = expItems.reduce((s, e) => s + Number(e['金額'] || 0), 0);
   const byCategory = {};
-  expItems.forEach(e => {
-    const cat = e['類別'] || '其他';
-    byCategory[cat] = (byCategory[cat] || 0) + Number(e['金額'] || 0);
-  });
-  const profit = revenue - personnelFees - totalExp;
+  expItems.forEach(e => { const c = e['類別']||'其他'; byCategory[c] = (byCategory[c]||0) + Number(e['金額']||0); });
+
+  const profit = revenue - totalFees - totalExp;
   const profitColor = profit >= 0 ? 'text-green-400' : 'text-red-400';
+
+  const incomeRows = incomeItems.map(it => `
+    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+      <span class="text-gray-300">${it['完工日期']} · ${it['客戶']||''} · ${it['品名']||''}</span>
+      <span class="text-amber-400 shrink-0 ml-2">$${Number(it['金額']||0).toLocaleString()}</span>
+    </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無完工收入</p>';
+
+  const feeRows = feeItems.map(it => `
+    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+      <span class="text-gray-300">${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}</span>
+      <span class="text-red-400 shrink-0 ml-2">$${Number(it['費用金額']||0).toLocaleString()}</span>
+    </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無已支付人員費用</p>';
+
+  const expRows = expItems.map(e => `
+    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+      <span class="text-gray-300">${String(e['日期']||'').slice(0,10)} · ${e['類別']||''} · ${e['備註']||''}</span>
+      <span class="text-red-400 shrink-0 ml-2">$${Number(e['金額']||0).toLocaleString()}</span>
+    </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無支出記錄</p>';
+
   return `
-  <div class="card mb-4">
-    <div class="section-title">盈虧摘要</div>
-    <div class="flex justify-between py-2 border-b border-gray-700">
-      <span class="text-gray-300">收入（完工）</span>
-      <span class="text-amber-400">$${revenue.toLocaleString()}</span>
+  <div class="card">
+    <div class="flex justify-between items-center mb-3 cursor-pointer" onclick="document.getElementById('pr_income').classList.toggle('hidden')">
+      <span class="text-gray-300 font-semibold">收入（完工 ${incomeItems.length} 件）</span>
+      <span class="text-amber-400 font-bold">$${revenue.toLocaleString()} ▾</span>
     </div>
-    <div class="flex justify-between py-2 border-b border-gray-700">
-      <span class="text-gray-300">人員費用（已支付）</span>
-      <span class="text-red-400">− $${personnelFees.toLocaleString()}</span>
+    <div id="pr_income" class="hidden mb-3">${incomeRows}</div>
+
+    <div class="flex justify-between items-center mb-3 cursor-pointer border-t border-gray-700 pt-3" onclick="document.getElementById('pr_fees').classList.toggle('hidden')">
+      <span class="text-gray-300 font-semibold">人員費用（已支付 ${feeItems.length} 件）</span>
+      <span class="text-red-400 font-bold">− $${totalFees.toLocaleString()} ▾</span>
     </div>
-    <div class="flex justify-between py-2 border-b border-gray-700 cursor-pointer" onclick="document.getElementById('expCatDetail').classList.toggle('hidden')">
-      <span class="text-gray-300">公司支出</span>
-      <span class="text-red-400">− $${totalExp.toLocaleString()} ▾</span>
+    <div id="pr_fees" class="hidden mb-3">${feeRows}</div>
+
+    <div class="flex justify-between items-center mb-1 cursor-pointer border-t border-gray-700 pt-3" onclick="document.getElementById('pr_exp').classList.toggle('hidden')">
+      <div>
+        <div class="text-gray-300 font-semibold">公司支出（${expItems.length} 筆）</div>
+        <div class="text-xs text-gray-500 mt-0.5">
+          ${Object.entries(byCategory).map(([c,a])=>`${c} $${a.toLocaleString()}`).join('・')||''}
+        </div>
+      </div>
+      <span class="text-red-400 font-bold shrink-0 ml-2">− $${totalExp.toLocaleString()} ▾</span>
     </div>
-    <div id="expCatDetail" class="hidden pl-3 pb-2">
-      ${Object.entries(byCategory).map(([cat, amt]) => `
-        <div class="flex justify-between text-sm py-1 text-gray-400">
-          <span>${cat}</span><span>$${amt.toLocaleString()}</span>
-        </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無支出記錄</p>'}
-    </div>
-    <div class="flex justify-between pt-3">
-      <span class="font-bold">淨利</span>
-      <span class="text-xl font-bold ${profitColor}">$${profit.toLocaleString()}</span>
+    <div id="pr_exp" class="hidden mb-3">${expRows}</div>
+
+    <div class="flex justify-between items-center border-t-2 border-gray-500 pt-3 mt-2">
+      <span class="font-bold text-base">淨利</span>
+      <span class="text-2xl font-bold ${profitColor}">$${profit.toLocaleString()}</span>
     </div>
   </div>`;
 }
@@ -1628,10 +1685,10 @@ async function saveExpense() {
   document.getElementById('exp_amt').value = '';
   document.getElementById('exp_note').value = '';
   showToast('已記錄支出 ✓');
-  const pEl = document.getElementById('profitSummary');
-  if (pEl && pEl.innerHTML) {
+  const pEl = document.getElementById('profitReport');
+  if (pEl && !pEl.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
-    pEl.innerHTML = renderProfitSummary(from, to);
+    pEl.innerHTML = renderProfitReport(from, to);
   }
 }
 
@@ -1667,7 +1724,8 @@ function queryStats() {
       ${detail || '<p class="text-gray-500 text-sm">無符合資料</p>'}
     </div>`;
 
-  document.getElementById('profitSummary').innerHTML = renderProfitSummary(from, to);
+  const prEl = document.getElementById('profitReport');
+  if (prEl && !prEl.classList.contains('hidden')) prEl.innerHTML = renderProfitReport(from, to);
 
   const cuEl = document.getElementById('statsByCustomer');
   if (cuEl && !cuEl.classList.contains('hidden')) cuEl.innerHTML = renderStatsByCustomer(from, to);
