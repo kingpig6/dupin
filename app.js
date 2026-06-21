@@ -447,6 +447,12 @@ function renderCustomerDetail() {
           ${it['備註'] ? `<div class="text-xs text-gray-500 mb-1">備註：${it['備註']}</div>` : ''}
           ${it['完工日期'] ? `<div class="text-xs text-amber-400 mb-1">完工：${it['完工日期']}</div>` : ''}
           ${it['請款單狀態'] === '已開單' ? `<div class="text-xs text-blue-400 mb-1">請款單已開</div>` : ''}
+          ${(() => {
+            const refs = String(it['參考圖片']||'').split(',').filter(u=>u.trim());
+            if (!refs.length) return '';
+            const urlsArg = refs.map(u=>`'${u.trim()}'`).join(',');
+            return `<button onclick="openLightbox([${urlsArg}],0)" class="text-xs text-purple-400 mt-1 flex items-center gap-1">📎 ${refs.length} 張參考圖</button>`;
+          })()}
           <div class="flex items-center gap-2 flex-wrap mt-1">
             <select onchange="cycleProgress('${it['工作ID']}',this.value)"
               class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
@@ -742,6 +748,57 @@ async function deleteItemPhoto(itemId, idx) {
   await api('update', '工作項目', { key: itemId, data: { '完工照片': it['完工照片'] } });
   saveCache();
 }
+
+// ── Lightbox ─────────────────────────────────
+let _lbUrls = [], _lbIdx = 0;
+
+function openLightbox(urls, idx) {
+  _lbUrls = urls; _lbIdx = idx;
+  let lb = document.getElementById('lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'lightbox';
+    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;touch-action:none;';
+    lb.innerHTML = `
+      <button onclick="closeLightbox()" style="position:absolute;top:16px;right:16px;color:#fff;font-size:28px;background:none;border:none;cursor:pointer;z-index:1000;">✕</button>
+      <div id="lb_counter" style="position:absolute;top:20px;left:50%;transform:translateX(-50%);color:#aaa;font-size:13px;"></div>
+      <img id="lb_img" style="max-width:95vw;max-height:82vh;object-fit:contain;border-radius:8px;user-select:none;" draggable="false"/>
+      <div style="display:flex;gap:24px;margin-top:16px;">
+        <button onclick="lbPrev()" id="lb_prev" style="color:#fff;font-size:28px;background:none;border:none;cursor:pointer;padding:8px 16px;">‹</button>
+        <button onclick="lbNext()" id="lb_next" style="color:#fff;font-size:28px;background:none;border:none;cursor:pointer;padding:8px 16px;">›</button>
+      </div>`;
+    lb.addEventListener('click', e => { if (e.target === lb) closeLightbox(); });
+    // 左右滑動支援
+    let tx = 0;
+    lb.addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, { passive: true });
+    lb.addEventListener('touchend', e => {
+      const dx = e.changedTouches[0].clientX - tx;
+      if (Math.abs(dx) > 50) dx < 0 ? lbNext() : lbPrev();
+    }, { passive: true });
+    document.body.appendChild(lb);
+  }
+  lb.style.display = 'flex';
+  lbShow();
+}
+
+function lbShow() {
+  document.getElementById('lb_img').src = _lbUrls[_lbIdx];
+  document.getElementById('lb_counter').textContent = _lbUrls.length > 1 ? `${_lbIdx + 1} / ${_lbUrls.length}` : '';
+  document.getElementById('lb_prev').style.opacity = _lbIdx > 0 ? '1' : '0.2';
+  document.getElementById('lb_next').style.opacity = _lbIdx < _lbUrls.length - 1 ? '1' : '0.2';
+}
+
+function lbPrev() { if (_lbIdx > 0) { _lbIdx--; lbShow(); } }
+function lbNext() { if (_lbIdx < _lbUrls.length - 1) { _lbIdx++; lbShow(); } }
+function closeLightbox() { const lb = document.getElementById('lightbox'); if (lb) lb.style.display = 'none'; }
+
+// 鍵盤操作
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('lightbox') || document.getElementById('lightbox').style.display === 'none') return;
+  if (e.key === 'ArrowLeft') lbPrev();
+  if (e.key === 'ArrowRight') lbNext();
+  if (e.key === 'Escape') closeLightbox();
+});
 
 // ── 參考圖片 ─────────────────────────────────
 function renderRefPhotoGrid(photoField, itemId) {
