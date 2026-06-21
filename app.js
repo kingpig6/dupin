@@ -27,6 +27,7 @@ let state = {
   items: [],          // 工作項目（扁平，單一表）
   customers: [],
   workers: [],
+  workerRates: {},    // { 姓名: 抽成比例 }，如 { '李安': 0.1 }
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
   viewSection: null,  // 從哪個區塊進入（active/done/invoiced/paid）
@@ -74,6 +75,7 @@ function saveCache() {
       customers: state.customers,
       settings: state.settings,
       workers: state.workers,
+      workerRates: state.workerRates,
       ts: Date.now(),
     }));
   } catch(e) {}
@@ -84,10 +86,11 @@ function loadCache() {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return false;
     const cache = JSON.parse(raw);
-    state.items     = cache.items     || [];
-    state.customers = cache.customers || [];
-    state.settings  = cache.settings  || {};
-    state.workers   = cache.workers   || [];
+    state.items       = cache.items       || [];
+    state.customers   = cache.customers   || [];
+    state.settings    = cache.settings    || {};
+    state.workers     = cache.workers     || [];
+    state.workerRates = cache.workerRates || {};
     return true;
   } catch(e) { return false; }
 }
@@ -110,7 +113,11 @@ async function loadAll() {
   if (wi.data) state.items     = wi.data.map(normalizeItem);
   if (c.data)  state.customers = c.data;
   if (s.data)  state.settings  = s.data;
-  if (w.data)  state.workers   = w.data.map(r => r['姓名'] || '').filter(Boolean);
+  if (w.data) {
+    state.workers = w.data.map(r => r['姓名'] || '').filter(Boolean);
+    state.workerRates = {};
+    w.data.forEach(r => { if (r['姓名']) state.workerRates[r['姓名']] = Number(r['抽成比例'] || 0); });
+  }
   saveCache();
   showLoading(false);
   render();
@@ -520,11 +527,20 @@ function editItem(id) {
       <input id="ei_price" value="${it['單價']||''}"       type="number" placeholder="單價"
         oninput="document.getElementById('ei_amt').textContent='$'+((document.getElementById('ei_qty').value||1)*this.value).toLocaleString()"/>
       <input id="ei_plate"  value="${it['車號']||''}"      placeholder="車號（選填）"/>
-      <select id="ei_worker">
+      <select id="ei_worker" onchange="onEditFeeTypeChange()">
         <option value="">負責師傅（選填）</option>
         ${state.workers.map(w => `<option value="${w}" ${it['負責師傅']===w?'selected':''}>${w}</option>`).join('')}
       </select>
     </div>
+    <div class="grid grid-cols-2 gap-2 mb-1">
+      <select id="ei_fee_type" onchange="onEditFeeTypeChange()">
+        <option value="" ${!it['費用類型']?'selected':''}>無費用</option>
+        <option value="傭金" ${it['費用類型']==='傭金'?'selected':''}>傭金（固定）</option>
+        <option value="抽成" ${it['費用類型']==='抽成'?'selected':''}>抽成（比例）</option>
+      </select>
+      <input id="ei_fee_amt" type="number" placeholder="費用金額" value="${Number(it['費用金額'])||''}"/>
+    </div>
+    <div id="ei_fee_info" class="text-xs text-amber-400 mb-2 min-h-4"></div>
     <div class="mb-2">
       <label class="section-title">交貨期限</label>
       <input id="ei_deadline" type="date" value="${it['交貨期限']||''}"/>
@@ -571,6 +587,8 @@ async function saveItem(id) {
     '交貨期限': document.getElementById('ei_deadline').value,
     '車號':     document.getElementById('ei_plate').value.trim(),
     '負責師傅': document.getElementById('ei_worker').value.trim(),
+    '費用類型': document.getElementById('ei_fee_type').value,
+    '費用金額': Number(document.getElementById('ei_fee_amt').value) || 0,
     '備註':     document.getElementById('ei_note').value.trim(),
   };
   Object.assign(it, data);
@@ -781,11 +799,20 @@ function renderItemRow(idx) {
     </div>
     <div class="grid grid-cols-2 gap-2 mb-2">
       <input placeholder="車號（選填）" id="r${idx}_plate"/>
-      <select id="r${idx}_worker">
+      <select id="r${idx}_worker" onchange="onFeeTypeChange(${idx})">
         <option value="">負責師傅（選填）</option>
         ${state.workers.map(w => `<option value="${w}">${w}</option>`).join('')}
       </select>
     </div>
+    <div class="grid grid-cols-2 gap-2 mb-1">
+      <select id="r${idx}_fee_type" onchange="onFeeTypeChange(${idx})">
+        <option value="">無費用</option>
+        <option value="傭金">傭金（固定）</option>
+        <option value="抽成">抽成（比例）</option>
+      </select>
+      <input id="r${idx}_fee_amt" type="number" placeholder="費用金額"/>
+    </div>
+    <div id="r${idx}_fee_info" class="text-xs text-amber-400 mb-2 min-h-4"></div>
     <div class="mb-2">
       <label class="text-xs text-gray-400">交貨期限（選填）</label>
       <input type="date" id="r${idx}_deadline"/>
@@ -816,6 +843,26 @@ function calcRowAmount(idx) {
   const price = Number(document.getElementById(`r${idx}_price`)?.value) || 0;
   const el = document.getElementById(`r${idx}_amt`);
   if (el) el.textContent = '$' + (qty * price).toLocaleString();
+  onFeeTypeChange(idx);
+}
+
+function onFeeTypeChange(idx) {
+  const feeTypeEl = document.getElementById(`r${idx}_fee_type`);
+  const feeAmtEl  = document.getElementById(`r${idx}_fee_amt`);
+  const infoEl    = document.getElementById(`r${idx}_fee_info`);
+  if (!feeTypeEl) return;
+  const feeType = feeTypeEl.value;
+  if (feeType === '抽成') {
+    const worker = document.getElementById(`r${idx}_worker`)?.value || '';
+    const rate   = (state.workerRates || {})[worker] || 0;
+    const qty    = Number(document.getElementById(`r${idx}_qty`)?.value)   || 0;
+    const price  = Number(document.getElementById(`r${idx}_price`)?.value) || 0;
+    const fee    = Math.round(qty * price * rate);
+    if (feeAmtEl) feeAmtEl.value = fee;
+    if (infoEl)   infoEl.textContent = rate ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}` : '（此師傅尚未設定抽成比例）';
+  } else {
+    if (infoEl) infoEl.textContent = '';
+  }
 }
 
 function generateOrderNo() {
@@ -886,6 +933,8 @@ async function saveNewItems() {
       '交貨期限': document.getElementById(`r${idx}_deadline`)?.value        || '',
       '車號':     document.getElementById(`r${idx}_plate`)?.value.trim()    || '',
       '負責師傅': document.getElementById(`r${idx}_worker`)?.value.trim()   || '',
+      '費用類型': document.getElementById(`r${idx}_fee_type`)?.value        || '',
+      '費用金額': Number(document.getElementById(`r${idx}_fee_amt`)?.value) || 0,
       '備註':     document.getElementById(`r${idx}_note`)?.value.trim()     || '',
     });
   }
@@ -1201,6 +1250,24 @@ async function deleteCustomer(name) {
   showView('customers');
 }
 
+function onEditFeeTypeChange() {
+  const feeType = document.getElementById('ei_fee_type')?.value;
+  const infoEl  = document.getElementById('ei_fee_info');
+  const feeAmtEl = document.getElementById('ei_fee_amt');
+  if (!feeType || !infoEl) return;
+  if (feeType === '抽成') {
+    const worker = document.getElementById('ei_worker')?.value || '';
+    const rate   = (state.workerRates || {})[worker] || 0;
+    const qty    = Number(document.getElementById('ei_qty')?.value)   || 1;
+    const price  = Number(document.getElementById('ei_price')?.value) || 0;
+    const fee    = Math.round(qty * price * rate);
+    if (feeAmtEl) feeAmtEl.value = fee;
+    infoEl.textContent = rate ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}` : '（此師傅尚未設定抽成比例）';
+  } else {
+    infoEl.textContent = '';
+  }
+}
+
 // ── 業績統計 ────────────────────────────────
 function renderStats() {
   const thisYear = new Date().getFullYear();
@@ -1231,7 +1298,23 @@ function renderStats() {
     <span class="section-title mb-0">施工人員業績</span>
     <span id="arrow-statsWorker" class="text-gray-400 text-lg">▼</span>
   </div>
-  <div id="statsByWorker" class="hidden"></div>`;
+  <div id="statsByWorker" class="hidden"></div>
+
+  <div class="card mt-4">
+    <div class="section-title">人員費用查詢</div>
+    <div class="grid grid-cols-2 gap-2 mb-2">
+      <div><label class="text-xs text-gray-400">起始日</label>
+        <input id="wf_from" type="date" value="${thisYear}-01-01"/></div>
+      <div><label class="text-xs text-gray-400">結束日</label>
+        <input id="wf_to" type="date" value="${thisYear}-12-31"/></div>
+    </div>
+    <select id="wf_worker" class="mb-3">
+      <option value="">-- 選擇師傅 --</option>
+      ${state.workers.map(w => `<option value="${w}">${w}</option>`).join('')}
+    </select>
+    <button class="btn btn-primary w-full" onclick="queryWorkerFee()">查詢應付費用</button>
+  </div>
+  <div id="workerFeeResult" class="mt-3"></div>`;
 }
 
 function toggleStatsCus() {
@@ -1320,6 +1403,41 @@ function renderStatsByWorker(from, to) {
         <div id="${detailId}" class="hidden mt-2">${rows}</div>
       </div>`;
     }).join('');
+}
+
+function queryWorkerFee() {
+  const worker = document.getElementById('wf_worker').value;
+  const from   = document.getElementById('wf_from').value;
+  const to     = document.getElementById('wf_to').value;
+  if (!worker) { showToast('請選擇師傅'); return; }
+
+  const filtered = state.items.filter(it => {
+    const d = it['完工日期'] || it['開單日期'] || '';
+    return it['負責師傅'] === worker && it['費用類型'] && d && d >= from && d <= to;
+  });
+
+  const totalFee = filtered.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+
+  const rows = filtered.map(it => {
+    const fee = Number(it['費用金額'] || 0);
+    const d   = it['完工日期'] || it['開單日期'] || '';
+    return `<div class="flex justify-between text-sm py-1 border-b border-gray-700">
+      <div>
+        <span class="text-gray-300">${d} · ${it['客戶']||''} · ${it['品名']||''}</span>
+        <span class="ml-2 text-xs text-gray-500">${it['費用類型']||''}</span>
+      </div>
+      <span class="text-amber-400 shrink-0 ml-2">$${fee.toLocaleString()}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('workerFeeResult').innerHTML = `
+    <div class="card">
+      <div class="flex justify-between mb-3">
+        <span class="text-gray-400">${worker}（${filtered.length} 件）</span>
+        <span class="text-2xl font-bold text-amber-400">$${totalFee.toLocaleString()}</span>
+      </div>
+      ${rows || '<p class="text-gray-500 text-sm">無符合資料</p>'}
+    </div>`;
 }
 
 function getStatsFilter() {
