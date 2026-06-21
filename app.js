@@ -27,8 +27,9 @@ let state = {
   items: [],          // 工作項目（扁平，單一表）
   customers: [],
   workers: [],
-  workerRates: {},    // { 姓名: 抽成比例 }，如 { '李安': 0.1 }
-  expenses: [],       // 支出記錄
+  workerRates: {},      // { 姓名: 抽成比例 }，如 { '李安': 0.1 }
+  expenses: [],         // 支出記錄
+  fixedTemplates: [],   // 固定支出模板
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
   viewSection: null,  // 從哪個區塊進入（active/done/invoiced/paid）
@@ -121,6 +122,7 @@ function saveCache() {
       workers: state.workers,
       workerRates: state.workerRates,
       expenses: state.expenses,
+      fixedTemplates: state.fixedTemplates,
       ts: Date.now(),
     }));
   } catch(e) {}
@@ -134,9 +136,10 @@ function loadCache() {
     state.items       = cache.items       || [];
     state.customers   = cache.customers   || [];
     state.settings    = cache.settings    || {};
-    state.workers     = cache.workers     || [];
-    state.workerRates = cache.workerRates || {};
-    state.expenses    = cache.expenses    || [];
+    state.workers         = cache.workers         || [];
+    state.workerRates     = cache.workerRates     || {};
+    state.expenses        = cache.expenses        || [];
+    state.fixedTemplates  = cache.fixedTemplates  || [];
     return true;
   } catch(e) { return false; }
 }
@@ -150,17 +153,19 @@ async function loadAll() {
     showLoading(true);
   }
 
-  const [wi, c, s, w, exp] = await Promise.all([
+  const [wi, c, s, w, exp, ftpl] = await Promise.all([
     api('getAll', '工作項目'),
     api('getAll', '客戶'),
     api('getSettings'),
     api('getAll', '員工'),
     api('getAll', '支出記錄'),
+    api('getAll', '固定支出'),
   ]);
-  if (wi.data)  state.items     = wi.data.map(normalizeItem);
-  if (c.data)   state.customers = c.data;
-  if (s.data)   state.settings  = s.data;
-  if (exp.data) state.expenses  = exp.data;
+  if (wi.data)   state.items          = wi.data.map(normalizeItem);
+  if (c.data)    state.customers      = c.data;
+  if (s.data)    state.settings       = s.data;
+  if (exp.data)  state.expenses       = exp.data;
+  if (ftpl.data) state.fixedTemplates = ftpl.data;
   if (w.data) {
     state.workers = w.data.map(r => r['姓名'] || '').filter(Boolean);
     state.workerRates = {};
@@ -1398,6 +1403,82 @@ function onEditFeeTypeChange() {
   }
 }
 
+// ── 固定支出模板 ─────────────────────────────
+const EXP_CATS = ['固定支出','耗材','外包','薪資','設備','其他'];
+
+function toggleFixedTemplates() {
+  const el = document.getElementById('fixedTemplatePanel');
+  const ar = document.getElementById('arrow-fixedTpl');
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) renderFixedTemplateList();
+}
+
+function renderFixedTemplateList() {
+  const list = document.getElementById('fixedTplList');
+  if (!list) return;
+  if (!state.fixedTemplates.length) {
+    list.innerHTML = '<p class="text-gray-500 text-xs mb-2">尚無固定支出，點下方新增</p>';
+    return;
+  }
+  list.innerHTML = state.fixedTemplates.map((t, idx) => `
+    <div class="flex items-center gap-2 mb-2 text-sm" id="ftpl_row_${idx}">
+      <input value="${t['名稱']||''}" placeholder="名稱" class="flex-1 text-sm" id="ftpl_name_${idx}"/>
+      <select id="ftpl_cat_${idx}" class="text-sm w-24">
+        ${EXP_CATS.map(c => `<option ${(t['類別']||'固定支出')===c?'selected':''}>${c}</option>`).join('')}
+      </select>
+      <input type="number" value="${t['金額']||''}" placeholder="金額" class="w-20 text-sm" id="ftpl_amt_${idx}"/>
+      <label class="flex items-center gap-1 shrink-0 text-xs">
+        <input type="checkbox" ${(t['啟用']||'是')==='是'?'checked':''} id="ftpl_on_${idx}"/> 啟用
+      </label>
+      <button onclick="saveFixedTemplate(${idx},this)" class="btn btn-primary text-xs px-2 shrink-0">存</button>
+      <button onclick="deleteFixedTemplate('${t['固定支出ID']}',${idx},this)" class="text-gray-500 hover:text-red-400 shrink-0">✕</button>
+    </div>`).join('');
+}
+
+function addFixedTemplateRow() {
+  const newTpl = { '固定支出ID': 'F' + Date.now(), '名稱': '', '類別': '固定支出', '金額': '', '備註': '', '啟用': '是' };
+  state.fixedTemplates.push(newTpl);
+  renderFixedTemplateList();
+  // focus 最後一列的名稱
+  const idx = state.fixedTemplates.length - 1;
+  setTimeout(() => document.getElementById(`ftpl_name_${idx}`)?.focus(), 50);
+}
+
+async function saveFixedTemplate(idx, btn) {
+  const tpl = state.fixedTemplates[idx];
+  if (!tpl) return;
+  tpl['名稱']   = document.getElementById(`ftpl_name_${idx}`).value.trim();
+  tpl['類別']   = document.getElementById(`ftpl_cat_${idx}`).value;
+  tpl['金額']   = Number(document.getElementById(`ftpl_amt_${idx}`).value) || 0;
+  tpl['啟用']   = document.getElementById(`ftpl_on_${idx}`).checked ? '是' : '否';
+  if (!tpl['名稱'] || !tpl['金額']) { showToast('請填名稱與金額'); return; }
+  await withBtn(btn, async () => {
+    const exists = await api('getAll', '固定支出');
+    const existRow = (exists.data || []).find(r => String(r['固定支出ID']) === String(tpl['固定支出ID']));
+    if (existRow) {
+      await api('update', '固定支出', { key: tpl['固定支出ID'], data: tpl });
+    } else {
+      await api('add', '固定支出', { data: tpl });
+    }
+    saveCache();
+    showToast('已儲存 ✓');
+  });
+}
+
+async function deleteFixedTemplate(id, idx, btn) {
+  if (btn.dataset.confirmed !== '1') {
+    btn.dataset.confirmed = '1'; btn.textContent = '確定？';
+    setTimeout(() => { if (btn.dataset.confirmed==='1') { btn.dataset.confirmed=''; btn.textContent='✕'; } }, 3000);
+    return;
+  }
+  state.fixedTemplates.splice(idx, 1);
+  saveCache();
+  await api('delete', '固定支出', { key: id });
+  renderFixedTemplateList();
+  showToast('已刪除 ✓');
+}
+
 // ── 業績統計 ────────────────────────────────
 function renderStats() {
   const thisYear = new Date().getFullYear();
@@ -1412,12 +1493,23 @@ function renderStats() {
       <div class="grid grid-cols-2 gap-2">
         <input id="exp_date" type="date" value="${new Date().toISOString().slice(0,10)}"/>
         <select id="exp_cat">
-          <option>固定支出</option><option>耗材</option><option>外包</option><option>其他</option>
+          <option>固定支出</option><option>耗材</option><option>外包</option><option>薪資</option><option>設備</option><option>其他</option>
         </select>
       </div>
       <input id="exp_amt" type="number" placeholder="金額 *"/>
       <input id="exp_note" placeholder="備註（選填）"/>
       <button class="btn btn-primary" onclick="saveExpense(this)">記錄支出</button>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <button type="button" onclick="toggleFixedTemplates()" class="w-full flex items-center justify-between">
+      <span class="section-title mb-0">固定支出模板（每月自動）</span>
+      <span id="arrow-fixedTpl" class="text-xs text-gray-400">▼</span>
+    </button>
+    <div id="fixedTemplatePanel" class="hidden mt-3">
+      <div id="fixedTplList"></div>
+      <button class="btn btn-ghost text-sm w-full mt-2" onclick="addFixedTemplateRow()">＋ 新增固定支出</button>
     </div>
   </div>` : ''}
 

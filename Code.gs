@@ -16,6 +16,7 @@ const ss = SpreadsheetApp.openById(SHEET_ID);
 // 工作項目：工作ID|訂單編號|客戶|開單日期|品名|規格|數量|單價|金額|交貨期限|進度|完工日期|收款狀態|車號|負責師傅|備註|完工照片|請款單狀態
 // 客戶：客戶名稱|聯絡人|電話|統一編號|地址|備註
 // 設定：鍵|值
+// 固定支出：固定支出ID|名稱|類別|金額|備註|啟用
 
 function doGet(e) {
   // 客戶查詢頁面：有 token 參數就直接回傳 HTML
@@ -69,7 +70,7 @@ function handleRequest(e) {
     if (clientId) {
       const roleInfo = user ? getUserRole(user.email) : null;
       const role = roleInfo ? roleInfo.role : null;
-      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto'];
+      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto','addFixedExpense'];
       if (writeActions.indexOf(action) >= 0) {
         if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
         if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
@@ -668,6 +669,69 @@ function uploadRefPhoto(itemId, base64, fileName) {
     }
   }
   return { success: true, url: imageUrl };
+}
+
+// ── 固定支出自動寫入（每月 1 號由時間觸發器呼叫）──
+// 設定方式：Apps Script → 觸發器 → 新增觸發器
+//   函式：autoInsertFixedExpenses
+//   事件來源：時間型
+//   時間型觸發器：每月（選每月 1 日）
+function autoInsertFixedExpenses() {
+  const tplSheet = ss.getSheetByName('固定支出');
+  const expSheet = ss.getSheetByName('支出記錄');
+  if (!tplSheet || !expSheet) return;
+
+  const tplRows = tplSheet.getDataRange().getValues();
+  const tplHeaders = tplRows[0];
+
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm   = String(today.getMonth() + 1).padStart(2, '0');
+  const dateStr = `${yyyy}-${mm}-01`;
+
+  // 讀取本月已存在的固定支出，避免重複寫入（若觸發器意外執行兩次）
+  const expRows = expSheet.getDataRange().getValues();
+  const expHeaders = expRows[0];
+  const thisMonthFixed = new Set();
+  for (let i = 1; i < expRows.length; i++) {
+    const row = {};
+    expHeaders.forEach((h, ci) => { row[h] = expRows[i][ci]; });
+    if (String(row['日期']).slice(0, 7) === `${yyyy}-${mm}` && row['類別'] === '固定支出（自動）') {
+      thisMonthFixed.add(row['備註']);
+    }
+  }
+
+  const toAdd = [];
+  const ts = Date.now();
+  for (let i = 1; i < tplRows.length; i++) {
+    const tpl = {};
+    tplHeaders.forEach((h, ci) => { tpl[h] = tplRows[i][ci]; });
+    if (String(tpl['啟用'] || '是') !== '是') continue;
+    const name = String(tpl['名稱'] || '').trim();
+    if (!name || thisMonthFixed.has(name)) continue; // 已寫入則跳過
+    toAdd.push([
+      'E' + (ts + i).toString(),  // 支出ID
+      dateStr,                     // 日期
+      tpl['類別'] || '固定支出',  // 類別
+      Number(tpl['金額']) || 0,   // 金額
+      name,                        // 備註（用名稱）
+    ]);
+  }
+
+  if (!toAdd.length) return;
+  const expColHeaders = expSheet.getRange(1, 1, 1, expSheet.getLastColumn()).getValues()[0];
+  const matrix = toAdd.map(row => expColHeaders.map(h => {
+    switch(h) {
+      case '支出ID': return row[0];
+      case '日期':   return row[1];
+      case '類別':   return row[2];
+      case '金額':   return row[3];
+      case '備註':   return row[4];
+      default: return '';
+    }
+  }));
+  expSheet.getRange(expSheet.getLastRow() + 1, 1, matrix.length, expColHeaders.length).setValues(matrix);
+  Logger.log(`自動寫入 ${matrix.length} 筆固定支出（${dateStr}）`);
 }
 
 // ── 哈客 2026-06 訂單匯入（執行後可刪除）────
