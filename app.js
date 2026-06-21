@@ -76,23 +76,22 @@ async function api(action, sheet, extra = {}) {
   }
 }
 
+let _silentRefreshResolve = null;
+
 function silentTokenRefresh() {
   return new Promise(resolve => {
     if (!window.google || !google.accounts || !GOOGLE_CLIENT_ID) { resolve(false); return; }
-    const timeout = setTimeout(() => resolve(false), 5000);
-    google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: response => {
-        clearTimeout(timeout);
-        auth.idToken = response.credential;
-        scheduleTokenRefresh();
-        resolve(true);
-      },
-      auto_select: true,
-    });
+    const timeout = setTimeout(() => { _silentRefreshResolve = null; resolve(false); }, 5000);
+    // 不重新 initialize（避免 FedCM AbortError），讓 handleCredentialResponse 接收新 token
+    _silentRefreshResolve = () => {
+      clearTimeout(timeout);
+      _silentRefreshResolve = null;
+      resolve(true);
+    };
     google.accounts.id.prompt(notification => {
       if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
         clearTimeout(timeout);
+        _silentRefreshResolve = null;
         resolve(false);
       }
     });
@@ -1839,6 +1838,8 @@ function showLoginGate(msg) {
 
 async function handleCredentialResponse(response) {
   auth.idToken = response.credential;
+  // 若是靜默刷新（背景 token 更新），通知等待中的 promise 即可，不重新登入
+  if (_silentRefreshResolve) { scheduleTokenRefresh(); _silentRefreshResolve(); return; }
   const r = await api('verifyLogin', null, {});
   if (r && r.success) {
     auth.email = r.email; auth.name = r.name; auth.role = r.role;
