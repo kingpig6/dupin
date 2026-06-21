@@ -453,6 +453,12 @@ function renderCustomerDetail() {
             const urlsArg = refs.map(u=>`'${u.trim()}'`).join(',');
             return `<button onclick="openLightbox([${urlsArg}],0)" class="text-xs text-purple-400 mt-1 flex items-center gap-1">📎 ${refs.length} 張參考圖</button>`;
           })()}
+          ${(() => {
+            const photos = String(it['完工照片']||'').split(',').filter(u=>u.trim());
+            if (!photos.length) return '';
+            const urlsArg = photos.map(u=>`'${u.trim()}'`).join(',');
+            return `<button onclick="openLightbox([${urlsArg}],0)" class="text-xs text-amber-400 mt-1 flex items-center gap-1">📷 ${photos.length} 張完工照片</button>`;
+          })()}
           <div class="flex items-center gap-2 flex-wrap mt-1">
             <select onchange="cycleProgress('${it['工作ID']}',this.value)"
               class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
