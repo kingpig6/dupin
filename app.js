@@ -1704,9 +1704,10 @@ function renderProfitReport(from, to) {
     </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無已支付人員費用</p>';
 
   const expRows = expItems.map(e => `
-    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
-      <span class="text-gray-300">${String(e['日期']||'').slice(0,10)} · ${e['類別']||''} · ${e['備註']||''}</span>
-      <span class="text-red-400 shrink-0 ml-2">$${Number(e['金額']||0).toLocaleString()}</span>
+    <div class="flex justify-between items-center text-sm py-1 border-b border-gray-700 gap-2">
+      <span class="text-gray-300 flex-1 min-w-0">${String(e['日期']||'').slice(0,10)} · ${e['類別']||''} · ${e['備註']||''}</span>
+      <span class="text-red-400 shrink-0">$${Number(e['金額']||0).toLocaleString()}</span>
+      ${isAdmin() ? `<button onclick="deleteExpense('${e['支出ID']}',this)" class="text-gray-500 hover:text-red-400 shrink-0 text-xs px-1">✕</button>` : ''}
     </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無支出記錄</p>';
 
   return `
@@ -1781,10 +1782,13 @@ async function saveExpense() {
   const amt  = Number(document.getElementById('exp_amt').value);
   const note = document.getElementById('exp_note').value.trim();
   if (!amt) { showToast('請填金額'); return; }
+  // 防止重複送出
+  const btn = document.querySelector('[onclick="saveExpense()"]');
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = '記錄中…'; }
   const data = { '支出ID': 'E' + Date.now(), '日期': date, '類別': cat, '金額': amt, '備註': note };
-  showLoading(true);
   const r = await api('add', '支出記錄', { data });
-  showLoading(false);
+  if (btn) { btn.disabled = false; btn.textContent = '記錄支出'; }
   if (r.error) { showToast('記錄失敗：' + r.error, 'error'); return; }
   state.expenses.push(data);
   saveCache();
@@ -1796,6 +1800,26 @@ async function saveExpense() {
     const { from, to } = getStatsFilter();
     pEl.innerHTML = renderProfitReport(from, to);
   }
+}
+
+async function deleteExpense(expId, btn) {
+  if (btn.dataset.confirmed !== '1') {
+    btn.dataset.confirmed = '1';
+    btn.textContent = '確定？';
+    btn.classList.add('text-red-400');
+    setTimeout(() => { if (btn.dataset.confirmed === '1') { btn.dataset.confirmed = ''; btn.textContent = '✕'; btn.classList.remove('text-red-400'); } }, 3000);
+    return;
+  }
+  btn.disabled = true;
+  state.expenses = state.expenses.filter(e => String(e['支出ID']) !== String(expId));
+  saveCache();
+  await api('delete', '支出記錄', { key: expId });
+  const pEl = document.getElementById('profitReport');
+  if (pEl && !pEl.classList.contains('hidden')) {
+    const { from, to } = getStatsFilter();
+    pEl.innerHTML = renderProfitReport(from, to);
+  }
+  showToast('已刪除支出 ✓');
 }
 
 function getStatsFilter() {
