@@ -57,18 +57,17 @@ function handleRequest(e) {
     const clientId = PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID');
     let user = null;
     if (body.idToken) user = verifyIdToken(body.idToken);
+    const roleInfo = user ? getUserRole(user.email) : null;
 
     // 登入驗證專用 action：回傳角色
     if (action === 'verifyLogin') {
       if (!user) return jsonOut({ error: 'TOKEN_INVALID', debug: debugTokenInfo(body.idToken) });
-      const role = getUserRole(user.email);
-      if (!role) return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
-      return jsonOut({ success: true, email: user.email, name: role.name || user.name, role: role.role });
+      if (!roleInfo) return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
+      return jsonOut({ success: true, email: user.email, name: roleInfo.name || user.name, role: roleInfo.role });
     }
 
     // 啟用權限控管後：所有寫入/敏感操作需要有效登入與足夠權限
     if (clientId) {
-      const roleInfo = user ? getUserRole(user.email) : null;
       const role = roleInfo ? roleInfo.role : null;
       const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto','addFixedExpense'];
       if (writeActions.indexOf(action) >= 0) {
@@ -77,12 +76,15 @@ function handleRequest(e) {
         // 僅 admin：刪除、開請款單
         if (action === 'delete' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         if (action === 'generateInvoice' && body.type === 'invoice' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
+        // 員工（非 admin）不可修改工作項目（僅能新增／開單）
+        if (action === 'update' && sheet === '工作項目' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
       }
     }
 
     let result;
     switch (action) {
-      case 'getAll':          result = getAll(sheet); break;
+      case 'getAll':          result = getAll(sheet, roleInfo); break;
+      case 'getMyFees':       result = getMyFees(roleInfo); break;
       case 'add':             result = addRow(sheet, body.data, user); break;
       case 'addBatch':        result = addRows(sheet, body.rows, user); break;
       case 'update':          result = updateRow(sheet, body.key, body.data); break;
@@ -299,17 +301,42 @@ function getCustomerView(token) {
 }
 
 // ── 通用：取得整張表 ────────────────────────
-function getAll(sheetName) {
+// roleInfo 有值且非 admin（一般員工）時，「工作項目」只回傳尚未指派的進行中項目
+function getAll(sheetName, roleInfo) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return { error: '工作表不存在：' + sheetName };
   const rows = sheet.getDataRange().getValues();
   if (rows.length < 2) return { data: [] };
   const headers = rows[0];
-  const data = rows.slice(1).map(row => {
+  let data = rows.slice(1).map(row => {
     const obj = {};
     headers.forEach((h, i) => { obj[h] = row[i]; });
     return obj;
   });
+
+  if (sheetName === '工作項目' && roleInfo && roleInfo.role !== 'admin') {
+    data = data.filter(r => r['進度'] !== '完成' && !String(r['負責師傅'] || '').trim());
+  }
+
+  return { data };
+}
+
+// ── 員工：查自己的傭金／費用（依「負責師傅」比對姓名）──
+function getMyFees(roleInfo) {
+  if (!roleInfo) return { error: 'LOGIN_REQUIRED' };
+  const sheet = ss.getSheetByName('工作項目');
+  if (!sheet) return { error: '工作表不存在：工作項目' };
+  const rows = sheet.getDataRange().getValues();
+  if (rows.length < 2) return { data: [] };
+  const headers = rows[0];
+  const name = String(roleInfo.name || '').trim();
+  const data = rows.slice(1)
+    .map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = row[i]; });
+      return obj;
+    })
+    .filter(r => name && String(r['負責師傅'] || '').trim() === name);
   return { data };
 }
 

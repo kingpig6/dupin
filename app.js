@@ -25,6 +25,7 @@ if ('serviceWorker' in navigator) {
 let state = {
   view: 'orders',
   items: [],          // 工作項目（扁平，單一表）
+  myFees: [],         // 員工專用：自己的傭金／費用（負責師傅＝自己）
   customers: [],
   workers: [],
   workerRates: {},      // { 姓名: 抽成比例 }，如 { '李安': 0.1 }
@@ -117,6 +118,7 @@ function saveCache() {
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify({
       items: state.items,
+      myFees: state.myFees,
       customers: state.customers,
       settings: state.settings,
       workers: state.workers,
@@ -134,6 +136,7 @@ function loadCache() {
     if (!raw) return false;
     const cache = JSON.parse(raw);
     state.items       = cache.items       || [];
+    state.myFees      = cache.myFees      || [];
     state.customers   = cache.customers   || [];
     state.settings    = cache.settings    || {};
     state.workers         = cache.workers         || [];
@@ -171,6 +174,12 @@ async function loadAll() {
     state.workerRates = {};
     w.data.forEach(r => { if (r['姓名']) state.workerRates[r['姓名']] = Number(r['抽成比例'] || 0); });
   }
+
+  if (auth.email && !isAdmin()) {
+    const mf = await api('getMyFees', null, {});
+    if (mf.data) state.myFees = mf.data.map(normalizeItem);
+  }
+
   saveCache();
   showLoading(false);
   render();
@@ -229,15 +238,12 @@ function render() {
   const back    = document.getElementById('backBtn');
   const actions = document.getElementById('headerActions');
 
-  // 業績僅限管理員
-  const statsNav = document.querySelector('.nav-btn[data-view="stats"]');
-  if (statsNav) statsNav.style.display = isAdmin() ? '' : 'none';
-  if (state.view === 'stats' && !isAdmin()) state.view = 'orders';
-
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.classList.toggle('text-amber-400', btn.dataset.view === state.view);
     btn.classList.toggle('text-gray-400',  btn.dataset.view !== state.view);
   });
+  const statsNavLabel = document.getElementById('statsNavLabel');
+  if (statsNavLabel) statsNavLabel.textContent = isAdmin() ? '業績' : '傭金';
 
   switch (state.view) {
     case 'orders':
@@ -277,10 +283,10 @@ function render() {
       app.innerHTML = renderCustomerForm();
       break;
     case 'stats':
-      title.textContent = '業績統計';
+      title.textContent = isAdmin() ? '業績統計' : '我的傭金';
       back.classList.add('hidden');
       actions.innerHTML = '';
-      app.innerHTML = renderStats();
+      app.innerHTML = isAdmin() ? renderStats() : renderMyCommission();
       break;
   }
 }
@@ -443,6 +449,7 @@ function renderCustomerDetail() {
             ${it['訂單編號'] || ''}
             ${it['開單日期'] ? ' · 開 ' + it['開單日期'] : ''}
             ${it['交貨期限'] ? ' · 交 ' + it['交貨期限'] : ''}
+            ${it['建立者'] ? ' · 開單人 ' + it['建立者'] : ''}
           </div>
           ${it['備註'] ? `<div class="text-xs text-gray-500 mb-1">備註：${it['備註']}</div>` : ''}
           ${it['完工日期'] ? `<div class="text-xs text-amber-400 mb-1">完工：${it['完工日期']}</div>` : ''}
@@ -460,6 +467,7 @@ function renderCustomerDetail() {
             return `<button onclick="openLightbox([${urlsArg}],0)" class="text-xs text-amber-400 mt-1 flex items-center gap-1">📷 ${photos.length} 張完工照片</button>`;
           })()}
           <div class="flex items-center gap-2 flex-wrap mt-1">
+            ${isAdmin() ? `
             <select onchange="cycleProgress('${it['工作ID']}',this.value)"
               class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
               <option value="待施工" ${prog==='待施工'?'selected':''}>待施工</option>
@@ -471,11 +479,15 @@ function renderCustomerDetail() {
               <option value="未收款" ${(it['收款狀態']||'未收款')==='未收款'?'selected':''}>未收款</option>
               <option value="已收款" ${it['收款狀態']==='已收款'?'selected':''}>已收款</option>
             </select>
+            ` : `
+            <span class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${prog}</span>
+            <span class="${payColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${it['收款狀態']||'未收款'}</span>
+            `}
           </div>
         </div>
         <div class="flex flex-col items-end gap-2 ml-3 shrink-0">
           <span class="text-amber-400 font-bold">$${Number(it['金額'] || 0).toLocaleString()}</span>
-          <button onclick="editItem('${it['工作ID']}')" class="text-amber-400 text-sm">✎</button>
+          ${isAdmin() ? `<button onclick="editItem('${it['工作ID']}')" class="text-amber-400 text-sm">✎</button>` : ''}
           ${isAdmin() ? `<button onclick="deleteItem('${it['工作ID']}')" class="text-amber-400 text-sm">✕</button>` : ''}
         </div>
       </div>
@@ -1623,6 +1635,75 @@ function renderStats() {
     <span id="arrow-workerFeePaid" class="text-gray-400 text-lg">▼</span>
   </div>
   <div id="workerFeePaid" class="hidden mb-4"></div>`;
+}
+
+// ── 我的傭金（一般員工專用）──────────────────
+function renderMyCommission() {
+  const thisYear = new Date().getFullYear();
+  const pending = state.myFees.filter(it => it['進度'] === '完成' && it['費用支付狀態'] === '未支付');
+  const pendingTotal = pending.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+
+  return `
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-2">
+      <span class="section-title mb-0">完工尚未結款</span>
+      <span class="text-amber-400 font-bold">$${pendingTotal.toLocaleString()}</span>
+    </div>
+    ${renderMyFeeRows(pending, '暫無待結款項目')}
+  </div>
+
+  <div class="card mb-4">
+    <div class="section-title">已結款查詢</div>
+    <div class="flex items-end gap-2 mb-2">
+      <div class="flex-1"><label class="text-xs text-gray-400">起始日</label>
+        <input id="mc_from" type="date" value="${thisYear}-01-01"/></div>
+      <div class="flex-1"><label class="text-xs text-gray-400">結束日</label>
+        <input id="mc_to" type="date" value="${thisYear}-12-31"/></div>
+      <button class="btn btn-ghost text-sm px-3 shrink-0 mb-0" style="height:38px" onclick="setMyCommissionMonth()">本月</button>
+    </div>
+    <button class="btn btn-primary w-full" onclick="queryMyCommission()">查詢</button>
+  </div>
+  <div id="myCommissionPaid"></div>`;
+}
+
+function renderMyFeeRows(items, emptyMsg) {
+  if (!items.length) return `<p class="text-gray-500 text-sm">${emptyMsg}</p>`;
+  return items
+    .slice()
+    .sort((a, b) => (b['完工日期'] || '') > (a['完工日期'] || '') ? 1 : -1)
+    .map(it => `
+    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+      <span class="text-gray-300">${it['完工日期'] || ''} · ${it['客戶'] || ''} · ${it['品名'] || ''}</span>
+      <span class="text-amber-400 shrink-0 ml-2">${it['費用類型'] || ''} $${Number(it['費用金額'] || 0).toLocaleString()}</span>
+    </div>`).join('');
+}
+
+function setMyCommissionMonth() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const last = new Date(y, now.getMonth() + 1, 0).getDate();
+  document.getElementById('mc_from').value = `${y}-${m}-01`;
+  document.getElementById('mc_to').value   = `${y}-${m}-${String(last).padStart(2,'0')}`;
+  queryMyCommission();
+}
+
+function queryMyCommission() {
+  const from = document.getElementById('mc_from').value;
+  const to   = document.getElementById('mc_to').value;
+  const paid = state.myFees.filter(it => {
+    const d = it['費用支付日期'] || '';
+    return it['費用支付狀態'] === '已支付' && (!from || (d >= from && d <= to));
+  });
+  const total = paid.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  document.getElementById('myCommissionPaid').innerHTML = `
+    <div class="card mb-2">
+      <div class="flex justify-between items-center mb-2">
+        <span class="section-title mb-0">已結款（${paid.length} 件）</span>
+        <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
+      </div>
+      ${renderMyFeeRows(paid, '此區間無已結款項目')}
+    </div>`;
 }
 
 function toggleStatsCus() {
