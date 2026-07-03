@@ -314,6 +314,13 @@ function renderOrders() {
   <div id="orderListContent">${renderOrdersContent()}</div>`;
 }
 
+// 員工視角安全過濾：不管 state.items 從哪裡來（快取／登入 token 尚未就緒時的回應），
+// 前端一律再擋一次，只留「進行中且未指派」的項目，避免登入瞬間的競速狀態短暫露出全部資料
+function visibleItems() {
+  if (isAdmin()) return state.items;
+  return state.items.filter(it => it['進度'] !== '完成' && !String(it['負責師傅'] || '').trim());
+}
+
 function renderOrdersContent() {
   const q = state.search.toLowerCase();
   const matchItem = it => !q ||
@@ -322,11 +329,12 @@ function renderOrdersContent() {
     (it['車號']    ||'').toLowerCase().includes(q) ||
     (it['訂單編號']||'').toLowerCase().includes(q);
 
+  const items = visibleItems();
   // 四類
-  const activeItems   = state.items.filter(it => it['進度'] !== '完成' && matchItem(it));
-  const doneItems     = state.items.filter(it => it['進度'] === '完成' && !it['請款單狀態'] && it['收款狀態'] !== '已收款' && matchItem(it));
-  const invoicedItems = state.items.filter(it => it['進度'] === '完成' && it['請款單狀態'] === '已開單' && it['收款狀態'] !== '已收款' && matchItem(it));
-  const paidItems     = state.items.filter(it => it['收款狀態'] === '已收款' && matchItem(it));
+  const activeItems   = items.filter(it => it['進度'] !== '完成' && matchItem(it));
+  const doneItems     = items.filter(it => it['進度'] === '完成' && !it['請款單狀態'] && it['收款狀態'] !== '已收款' && matchItem(it));
+  const invoicedItems = items.filter(it => it['進度'] === '完成' && it['請款單狀態'] === '已開單' && it['收款狀態'] !== '已收款' && matchItem(it));
+  const paidItems     = items.filter(it => it['收款狀態'] === '已收款' && matchItem(it));
 
   // 依交貨期限排序進行中
   activeItems.sort((a, b) => {
@@ -414,7 +422,7 @@ function renderCustomerDetail() {
     paid:     it => it['收款狀態'] === '已收款',
   };
   const filterFn = section && sectionFilter[section] ? sectionFilter[section] : () => true;
-  const its = state.items.filter(it => it['客戶'] === name && filterFn(it));
+  const its = visibleItems().filter(it => it['客戶'] === name && filterFn(it));
   const subtotal = its.reduce((s, it) => s + Number(it['金額'] || 0), 0);
 
   const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-600', '完成': 'bg-green-600' };
