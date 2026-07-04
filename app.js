@@ -41,33 +41,48 @@ let state = {
 
 // ── API 呼叫 ─────────────────────────────────
 const API_SECRET = 'dupin2026';
+const TOKEN_REFRESH_MAX_ATTEMPTS = 3;
+const TOKEN_REFRESH_RETRY_DELAY_MS = 1500;
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function postApi(payload) {
+  return fetch(API_URL, {
+    method: 'POST',
+    redirect: 'follow',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(payload),
+  }).then(res => res.json());
+}
+
+function isAuthError(data) {
+  return !!(data && (data.error === 'LOGIN_REQUIRED' || data.error === 'TOKEN_INVALID'));
+}
+
 async function api(action, sheet, extra = {}) {
   const payload = { action, sheet, secret: API_SECRET, ...extra };
   if (auth.idToken) payload.idToken = auth.idToken;
   try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      redirect: 'follow',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data && (data.error === 'LOGIN_REQUIRED' || data.error === 'TOKEN_INVALID')) {
-      // token 過期：先靜默刷新，成功就重試，失敗才登出
+    let data = await postApi(payload);
+
+    // token 過期／尚未就緒：多試幾次靜默刷新，避免 Google 端偶發失敗就直接判定登入失效
+    let attempts = 0;
+    while (isAuthError(data) && attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
+      attempts++;
       const refreshed = await silentTokenRefresh();
       if (refreshed) {
         payload.idToken = auth.idToken;
-        const res2 = await fetch(API_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
-        const data2 = await res2.json();
-        if (data2 && (data2.error === 'LOGIN_REQUIRED' || data2.error === 'TOKEN_INVALID')) {
-          logout('登入已逾期，請重新登入');
-        } else if (data2 && data2.error === 'FORBIDDEN') {
-          showToast('權限不足，此操作僅限管理員', 'error');
-        }
-        return data2;
+        data = await postApi(payload);
+      } else if (attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
+        await sleep(TOKEN_REFRESH_RETRY_DELAY_MS);
       }
-      logout('登入已逾期，請重新登入');
-      return data;
+    }
+
+    if (isAuthError(data)) {
+      // 重試多次仍失敗：不清空本機身分／快取，讓使用者可以繼續看快取資料，
+      // 只提示這次操作沒完成，需要的話再手動重試或重新整理
+      auth.idToken = null;
+      showToast('操作未完成，登入可能暫時中斷，請稍後再試一次', 'error');
     } else if (data && data.error === 'FORBIDDEN') {
       showToast('權限不足，此操作僅限管理員', 'error');
     }
@@ -100,11 +115,13 @@ function silentTokenRefresh() {
   });
 }
 
+// 排程下一次靜默刷新；不管上一次成功或失敗都要繼續排，避免刷新鏈中斷後就再也不會自動恢復
 function scheduleTokenRefresh() {
   clearTimeout(window._tokenRefreshTimer);
-  window._tokenRefreshTimer = setTimeout(() => {
-    if (!auth.idToken) return;
-    silentTokenRefresh();
+  window._tokenRefreshTimer = setTimeout(async () => {
+    if (!auth.email) return;
+    await silentTokenRefresh();
+    scheduleTokenRefresh();
   }, 50 * 60 * 1000); // 50 分鐘後靜默刷新（token 1 小時到期前）
 }
 
