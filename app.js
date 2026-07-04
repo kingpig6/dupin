@@ -1717,10 +1717,20 @@ function renderStats() {
 // ── 我的傭金（一般員工專用）──────────────────
 function renderMyCommission() {
   const thisYear = new Date().getFullYear();
+  const unfinished = state.myFees.filter(it => it['進度'] !== '完成');
+  const unfinishedTotal = unfinished.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
   const pending = state.myFees.filter(it => it['進度'] === '完成' && it['費用支付狀態'] === '未支付');
   const pendingTotal = pending.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
 
   return `
+  <div class="card mb-4">
+    <div class="flex justify-between items-center mb-2">
+      <span class="section-title mb-0">未完工總和</span>
+      <span class="text-amber-400 font-bold">$${unfinishedTotal.toLocaleString()}</span>
+    </div>
+    ${renderMyFeeRows(unfinished, '暫無進行中項目')}
+  </div>
+
   <div class="card mb-4">
     <div class="flex justify-between items-center mb-2">
       <span class="section-title mb-0">完工尚未結款</span>
