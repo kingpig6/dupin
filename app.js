@@ -318,7 +318,12 @@ function renderOrders() {
 // 前端一律再擋一次，只留「進行中且未指派」的項目，避免登入瞬間的競速狀態短暫露出全部資料
 function visibleItems() {
   if (isAdmin()) return state.items;
-  return state.items.filter(it => it['進度'] !== '完成' && !String(it['負責師傅'] || '').trim());
+  const me = String(auth.name || '').trim();
+  return state.items.filter(it => {
+    const w = String(it['負責師傅'] || '').trim();
+    if (!w) return it['進度'] !== '完成';   // 未指派：只看進行中
+    return me && w === me;                   // 已指派：只看自己的（含完成）
+  });
 }
 
 function renderOrdersContent() {
@@ -1029,6 +1034,14 @@ function renderItemRow(idx) {
       <input type="date" id="r${idx}_deadline"/>
     </div>
     <textarea placeholder="備註（選填）" rows="2" id="r${idx}_note" class="w-full mb-1"></textarea>
+    <div class="flex items-center gap-2 mb-1">
+      <label class="btn btn-ghost text-xs cursor-pointer shrink-0">
+        📎 加參考圖
+        <input type="file" accept="image/*" multiple class="hidden" id="r${idx}_ref"
+          onchange="document.getElementById('r${idx}_ref_count').textContent=this.files.length?('已選 '+this.files.length+' 張'):''"/>
+      </label>
+      <span id="r${idx}_ref_count" class="text-xs text-purple-400"></span>
+    </div>
     <div class="flex justify-between items-center mt-1">
       <span class="text-xs text-gray-400">金額：<span id="r${idx}_amt" class="text-amber-400">$0</span></span>
       ${idx > 0 ? `<button type="button" onclick="removeItemRow(${idx})" class="text-amber-400 text-sm">移除</button>` : ''}
@@ -1133,12 +1146,14 @@ async function saveNewItems(btn) {
 
   const rows = document.querySelectorAll('[id^="itemRow_"]');
   const toSave = [];
+  const refFilesList = []; // 與 toSave 對齊：每列選取的參考圖 File 陣列
   for (const row of rows) {
     const idx  = row.id.replace('itemRow_', '');
     const name = document.getElementById(`r${idx}_name`)?.value.trim();
     if (!name) continue;
     const qty   = Number(document.getElementById(`r${idx}_qty`)?.value)      || 1;
     const price = Number(document.getElementById(`r${idx}_price`)?.value)    || 0;
+    refFilesList.push(Array.from(document.getElementById(`r${idx}_ref`)?.files || []));
     toSave.push({
       '品名':     name,
       '規格':     document.getElementById(`r${idx}_spec`)?.value.trim()     || '',
@@ -1181,6 +1196,28 @@ async function saveNewItems(btn) {
     itemRowCount = 1;
     showView('orders');
     showToast(`已建立 ${payloadRows.length} 件工作項目 ✓`);
+
+    // 上傳各列選取的參考圖
+    const totalRefs = refFilesList.reduce((s, fs) => s + fs.length, 0);
+    if (totalRefs > 0) {
+      showToast(`參考圖上傳中（${totalRefs} 張）…`);
+      let done = 0, failed = 0;
+      for (let i = 0; i < payloadRows.length; i++) {
+        const itemId = payloadRows[i]['工作ID'];
+        for (const file of refFilesList[i]) {
+          const base64 = await compressImage(file, 1024);
+          const res = await api('uploadRefPhoto', null, { itemId, base64, fileName: file.name });
+          if (res && res.url) {
+            const it = state.items.find(x => String(x['工作ID']) === String(itemId));
+            if (it) it['參考圖片'] = (it['參考圖片'] ? it['參考圖片'] + ',' : '') + res.url;
+            done++;
+          } else failed++;
+        }
+      }
+      saveCache();
+      render();
+      showToast(failed ? `參考圖：${done} 張成功、${failed} 張失敗` : `參考圖已上傳 ${done} 張 ✓`, failed ? 'error' : 'success');
+    }
   });
 }
 
