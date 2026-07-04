@@ -653,7 +653,7 @@ function editItem(id) {
         <span class="text-xs text-gray-400">參考圖片（施工用）</span>
         <label class="btn btn-ghost text-xs cursor-pointer">
           上傳
-          <input type="file" accept="image/*" class="hidden"
+          <input type="file" accept="image/*" multiple class="hidden"
             onchange="uploadRefPhoto('${id}',this)">
         </label>
       </div>
@@ -847,23 +847,31 @@ function renderRefPhotoGrid(photoField, itemId) {
 }
 
 async function uploadRefPhoto(itemId, input) {
-  const file = input.files[0];
-  if (!file) return;
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
   const prog = document.getElementById(`refUploadProg_${itemId}`);
-  if (prog) prog.classList.remove('hidden');
-  const base64 = await compressImage(file, 1024);
-  const result = await api('uploadRefPhoto', null, { itemId, base64, fileName: file.name });
+  const it = state.items.find(x => String(x['工作ID']) === String(itemId));
+  let done = 0, failed = 0;
+  for (let i = 0; i < files.length; i++) {
+    if (prog) {
+      prog.classList.remove('hidden');
+      prog.textContent = `上傳中… ${i + 1} / ${files.length}`;
+    }
+    const base64 = await compressImage(files[i], 1024);
+    const result = await api('uploadRefPhoto', null, { itemId, base64, fileName: files[i].name });
+    if (result && result.url) {
+      done++;
+      if (it) {
+        it['參考圖片'] = (it['參考圖片'] ? it['參考圖片'] + ',' : '') + result.url;
+        const grid = document.getElementById(`refPhotoGrid_${itemId}`);
+        if (grid) grid.innerHTML = renderRefPhotoGrid(it['參考圖片'], itemId);
+      }
+    } else failed++;
+  }
   if (prog) prog.classList.add('hidden');
   input.value = '';
-  if (result.error) { showToast('上傳失敗：' + result.error, 'error'); return; }
-  const it = state.items.find(x => String(x['工作ID']) === String(itemId));
-  if (it) {
-    it['參考圖片'] = (it['參考圖片'] ? it['參考圖片'] + ',' : '') + result.url;
-    const grid = document.getElementById(`refPhotoGrid_${itemId}`);
-    if (grid) grid.innerHTML = renderRefPhotoGrid(it['參考圖片'], itemId);
-    saveCache();
-  }
-  showToast('參考圖片已上傳 ✓');
+  saveCache();
+  showToast(failed ? `參考圖：${done} 張成功、${failed} 張失敗` : `參考圖已上傳 ${done} 張 ✓`, failed ? 'error' : 'success');
 }
 
 async function deleteRefPhoto(itemId, idx) {
