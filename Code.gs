@@ -315,7 +315,13 @@ function getAll(sheetName, roleInfo) {
   });
 
   if (sheetName === '工作項目' && roleInfo && roleInfo.role !== 'admin') {
-    data = data.filter(r => r['進度'] !== '完成' && !String(r['負責師傅'] || '').trim());
+    // 員工可見：進行中且未指派的項目 ＋ 分配給自己的項目
+    const myName = String(roleInfo.name || '').trim();
+    data = data.filter(r => {
+      const w = String(r['負責師傅'] || '').trim();
+      if (!w) return r['進度'] !== '完成';       // 未指派：只看進行中
+      return myName && w === myName;              // 已指派：只看自己的（含完成）
+    });
   }
 
   return { data };
