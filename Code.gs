@@ -78,6 +78,16 @@ function handleRequest(e) {
         if (action === 'generateInvoice' && body.type === 'invoice' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         // 員工（非 admin）不可修改工作項目（僅能新增／開單）
         if (action === 'update' && sheet === '工作項目' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
+        // 員工（非 admin）開單時，負責師傅只能填自己或留空，避免指派給別人
+        if (sheet === '工作項目' && role !== 'admin') {
+          const myName = roleInfo.name || '';
+          if (action === 'add' && body.data) {
+            sanitizeWorkerField(body.data, myName);
+          }
+          if (action === 'addBatch' && body.rows) {
+            body.rows.forEach(row => sanitizeWorkerField(row, myName));
+          }
+        }
       }
     }
 
@@ -344,6 +354,12 @@ function getMyFees(roleInfo) {
     })
     .filter(r => name && String(r['負責師傅'] || '').trim() === name);
   return { data };
+}
+
+// ── 員工開單：負責師傅只能填自己或留空，避免指派給別人 ──
+function sanitizeWorkerField(data, myName) {
+  const w = String(data['負責師傅'] || '').trim();
+  if (w && w !== String(myName || '').trim()) data['負責師傅'] = '';
 }
 
 // ── 通用：新增一列 ──────────────────────────

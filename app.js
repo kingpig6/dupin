@@ -1029,6 +1029,13 @@ function renderNewOrder() {
   </div>`;
 }
 
+// 員工開單時，負責師傅只能選自己或留空；老闆維持看得到全部名單
+function workerOptions() {
+  if (isAdmin()) return state.workers;
+  const me = String(auth.name || '').trim();
+  return state.workers.filter(w => w === me);
+}
+
 function renderItemRow(idx) {
   return `
   <div class="card mb-2" id="itemRow_${idx}">
@@ -1042,7 +1049,7 @@ function renderItemRow(idx) {
       <input placeholder="車號（選填）" id="r${idx}_plate"/>
       <select id="r${idx}_worker" onchange="onFeeTypeChange(${idx})">
         <option value="">負責師傅（選填）</option>
-        ${state.workers.map(w => `<option value="${w}">${w}</option>`).join('')}
+        ${workerOptions().map(w => `<option value="${w}">${w}</option>`).join('')}
       </select>
     </div>
     <div class="grid grid-cols-2 gap-2 mb-1">
