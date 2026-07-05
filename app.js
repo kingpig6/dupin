@@ -195,6 +195,7 @@ async function loadAll() {
   if (auth.email && !isAdmin()) {
     const mf = await api('getMyFees', null, {});
     if (mf.data) state.myFees = mf.data.map(normalizeItem);
+    checkPaymentCelebration();
   }
 
   saveCache();
@@ -304,6 +305,7 @@ function render() {
       back.classList.add('hidden');
       actions.innerHTML = '';
       app.innerHTML = isAdmin() ? renderStats() : renderMyCommission();
+      if (!isAdmin()) requestAnimationFrame(startCommissionAnimations);
       break;
   }
 }
@@ -1714,15 +1716,191 @@ function renderStats() {
   <div id="workerFeePaid" class="hidden mb-4"></div>`;
 }
 
+// ── 傭金遊戲化：段位／等級（每 $1萬 一級，每 3 級一段）──
+const RANK_THRESHOLDS = [
+  { min: 0,      rank: '學徒',   level: 0    },
+  { min: 10000,  rank: '學徒',   level: 1    },
+  { min: 20000,  rank: '學徒',   level: 2    },
+  { min: 30000,  rank: '學徒',   level: 3    },
+  { min: 40000,  rank: '師傅',   level: 1    },
+  { min: 50000,  rank: '師傅',   level: 2    },
+  { min: 60000,  rank: '師傅',   level: 3    },
+  { min: 70000,  rank: '大師傅', level: 1    },
+  { min: 80000,  rank: '大師傅', level: 2    },
+  { min: 90000,  rank: '大師傅', level: 3    },
+  { min: 110000, rank: '大師',   level: null },
+];
+
+function getRankInfo(amount) {
+  let cur = RANK_THRESHOLDS[0];
+  let next = RANK_THRESHOLDS[1] || null;
+  for (let i = 0; i < RANK_THRESHOLDS.length; i++) {
+    if (amount >= RANK_THRESHOLDS[i].min) { cur = RANK_THRESHOLDS[i]; next = RANK_THRESHOLDS[i + 1] || null; }
+    else break;
+  }
+  const isMax = cur.level === null;
+  const floor = cur.min;
+  const ceil  = next ? next.min : floor;
+  const pct   = isMax ? 100 : Math.min(100, Math.max(0, ((amount - floor) / (ceil - floor)) * 100));
+  return { rank: cur.rank, level: cur.level, isMax, floor, ceil, pct };
+}
+
+// 雙環目標：每 $3萬 一階，達成後自動變成下一階
+function getRingGoal(amount) {
+  return (Math.floor(amount / 30000) + 1) * 30000;
+}
+
+function monthRange(offset) {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const last  = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+  const toIso = d => d.toISOString().slice(0, 10);
+  return { start: toIso(first), end: toIso(last) };
+}
+
+// 連續達標：往前推算連續幾個月「已完成」傭金合計 ≥ $30,000
+function computeMonthlyStreak() {
+  const STREAK_TARGET = 30000;
+  const monthly = {};
+  state.myFees.forEach(it => {
+    if (it['進度'] !== '完成' || !it['完工日期']) return;
+    const key = String(it['完工日期']).slice(0, 7);
+    monthly[key] = (monthly[key] || 0) + Number(it['費用金額'] || 0);
+  });
+  const now = new Date();
+  const keyFor = i => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  };
+  let streak = 0;
+  for (let i = 1; (monthly[keyFor(i)] || 0) >= STREAK_TARGET; i++) streak++;
+  if ((monthly[keyFor(0)] || 0) >= STREAK_TARGET) streak++;
+  return streak;
+}
+
+let _newHighShown = false;
+function maybeShowNewHighToast(thisMonthTotal, lastMonthTotal) {
+  if (_newHighShown || lastMonthTotal <= 0 || thisMonthTotal <= lastMonthTotal) return;
+  _newHighShown = true;
+  setTimeout(() => showToast('本月創新高 🎉', 'success'), 500);
+}
+
+// 結款慶祝：跟上次記錄比對，發現有新入帳的傭金就跳金幣雨
+function checkPaymentCelebration() {
+  if (!auth.email || isAdmin()) return;
+  const key = 'dupin_seen_paid_' + auth.email;
+  const paidIds = state.myFees.filter(it => it['費用支付狀態'] === '已支付').map(it => String(it['工作ID']));
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) {}
+  const seenSet = new Set(seen);
+  const newlyPaid = paidIds.filter(id => !seenSet.has(id));
+  localStorage.setItem(key, JSON.stringify(paidIds));
+  if (seen.length > 0 && newlyPaid.length > 0) celebratePayment(newlyPaid.length);
+}
+
+function celebratePayment(count) {
+  showToast(`💰 有 ${count} 筆傭金剛入帳！`, 'success');
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const layer = document.createElement('div');
+  layer.id = 'coinRain';
+  document.body.appendChild(layer);
+  const coins = ['🪙', '💰', '✨'];
+  for (let i = 0; i < 24; i++) {
+    const c = document.createElement('span');
+    c.className = 'coin';
+    c.textContent = coins[i % coins.length];
+    c.style.left = (Math.random() * 100) + 'vw';
+    c.style.animationDelay = (Math.random() * 0.6) + 's';
+    c.style.fontSize = (16 + Math.random() * 14) + 'px';
+    layer.appendChild(c);
+  }
+  setTimeout(() => layer.remove(), 2600);
+}
+
+function animateNumber(el, from, to, duration) {
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduceMotion) { el.textContent = '$' + to.toLocaleString(); return; }
+  const start = performance.now();
+  function tick(now) {
+    const p = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    const val = Math.round(from + (to - from) * eased);
+    el.textContent = '$' + val.toLocaleString();
+    if (p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function startCommissionAnimations() {
+  document.querySelectorAll('.count-up').forEach(el => {
+    animateNumber(el, 0, Number(el.dataset.target || 0), 900);
+  });
+  const fill = document.getElementById('mcXpFill');
+  if (fill) requestAnimationFrame(() => { fill.style.width = fill.dataset.pct + '%'; });
+}
+
 // ── 我的傭金（一般員工專用）──────────────────
 function renderMyCommission() {
   const thisYear = new Date().getFullYear();
+
   const unfinished = state.myFees.filter(it => it['進度'] !== '完成');
   const unfinishedTotal = unfinished.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+
+  const { start: mStart, end: mEnd } = monthRange(0);
+  const finishedThisMonth = state.myFees.filter(it => it['進度'] === '完成' && it['完工日期'] >= mStart && it['完工日期'] <= mEnd);
+  const finishedThisMonthTotal = finishedThisMonth.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  const thisMonthTotal = unfinishedTotal + finishedThisMonthTotal;
+
+  const { start: lStart, end: lEnd } = monthRange(-1);
+  const lastMonthTotal = state.myFees
+    .filter(it => it['進度'] === '完成' && it['完工日期'] >= lStart && it['完工日期'] <= lEnd)
+    .reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+
+  const rank = getRankInfo(thisMonthTotal);
+  const ringGoal = getRingGoal(thisMonthTotal);
+  const streak = computeMonthlyStreak();
+  maybeShowNewHighToast(thisMonthTotal, lastMonthTotal);
+
+  // 雙環：填滿比例 = 本月合計／本階目標，未完成／已完成依比例分兩色
+  const totalPct = Math.min(1, ringGoal > 0 ? thisMonthTotal / ringGoal : 0);
+  const totalDeg = totalPct * 360;
+  const unfinishedDeg = thisMonthTotal > 0 ? (unfinishedTotal / thisMonthTotal) * totalDeg : 0;
+  const ringGradient = `conic-gradient(#f59e0b 0deg ${unfinishedDeg}deg, #fbbf24 ${unfinishedDeg}deg ${totalDeg}deg, #0f172a ${totalDeg}deg 360deg)`;
+
   const pending = state.myFees.filter(it => it['進度'] === '完成' && it['費用支付狀態'] === '未支付');
   const pendingTotal = pending.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
 
   return `
+  <div class="xp-card">
+    <div class="xp-lastmonth">上個月傭金：<b>$${lastMonthTotal.toLocaleString()}</b></div>
+    <div class="xp-top">
+      <div class="xp-lv-row">
+        <div class="lv-badge">${rank.isMax ? '★' : 'Lv' + rank.level}</div>
+        <div class="lv-name">${rank.isMax ? rank.rank : rank.rank + ' ' + rank.level + '級'}</div>
+      </div>
+      <div class="xp-amt count-up" data-target="${thisMonthTotal}">$0</div>
+    </div>
+    <div class="xp-track"><div class="xp-fill${rank.isMax ? ' maxed' : ''}" id="mcXpFill" style="width:0%" data-pct="${rank.pct}"></div></div>
+    <div class="xp-sub">
+      <span>本月 ${mStart} ～ ${mEnd}</span>
+      <span>${rank.isMax ? '已達最高段位 🏆' : '還差 $' + (rank.ceil - thisMonthTotal).toLocaleString() + ' 升級'}</span>
+    </div>
+    ${streak >= 2 ? `<div class="streak-badge">🔥 連續 ${streak} 個月破 $30,000</div>` : ''}
+  </div>
+
+  <div class="ring-card">
+    <div class="ring-row">
+      <div class="rank-ring" style="background:${ringGradient}">
+        <div class="ring-center"><b class="count-up" data-target="${thisMonthTotal}">$0</b><span>本月合計</span></div>
+      </div>
+      <div class="ring-legend">
+        <div><span class="dot" style="background:#f59e0b"></span>未完工預估 $${unfinishedTotal.toLocaleString()}</div>
+        <div><span class="dot" style="background:#fbbf24"></span>本月已完成 $${finishedThisMonthTotal.toLocaleString()}</div>
+        <div style="color:#6b7280">本階目標 $${ringGoal.toLocaleString()}</div>
+      </div>
+    </div>
+  </div>
+
   <div class="card mb-4">
     <div class="flex justify-between items-center mb-2">
       <span class="section-title mb-0">未完工總和</span>
