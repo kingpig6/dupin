@@ -2416,7 +2416,8 @@ function showToast(msg, type = 'success') {
 }
 
 // ── Google 登入 ─────────────────────────────
-function showLoginGate(msg) {
+function showLoginGate(msg, retries) {
+  retries = retries || 0;
   document.querySelector('nav.no-print')?.classList.add('hidden');
   const header = document.querySelector('header.no-print');
   if (header) header.querySelector('#headerActions').innerHTML = '';
@@ -2435,9 +2436,16 @@ function showLoginGate(msg) {
     }
     google.accounts.id.renderButton(document.getElementById('gsiButton'),
       { theme: 'filled_blue', size: 'large', text: 'signin_with', shape: 'pill' });
+  } else if (retries < 25) {
+    // GIS 還沒載入完，稍候重試（最多約 7.5 秒）
+    setTimeout(() => showLoginGate(msg, retries + 1), 300);
   } else {
-    // GIS 還沒載入完，稍候重試
-    setTimeout(() => showLoginGate(msg), 300);
+    // Google 登入腳本載入失敗（網路不穩／被內容阻擋器擋住）
+    document.getElementById('gsiButton').innerHTML = `
+      <div class="text-center">
+        <p class="text-red-400 text-sm mb-3">Google 登入元件載入失敗<br>請確認網路，或關閉廣告阻擋器後再試</p>
+        <button class="btn btn-primary" onclick="location.reload()">重新載入</button>
+      </div>`;
   }
 }
 
