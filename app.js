@@ -324,7 +324,7 @@ function toggleSection(key) {
 function renderOrders() {
   return `
   <div class="relative mb-3">
-    <input type="search" placeholder="搜尋客戶、品名、車號…"
+    <input type="search" placeholder="搜尋客戶、品名、車號、師傅…"
       value="${state.search}"
       oninput="state.search=this.value;document.getElementById('orderListContent').innerHTML=renderOrdersContent()"
       class="w-full pl-9 pr-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500"/>
@@ -351,6 +351,7 @@ function renderOrdersContent() {
     (it['客戶']    ||'').toLowerCase().includes(q) ||
     (it['品名']    ||'').toLowerCase().includes(q) ||
     (it['車號']    ||'').toLowerCase().includes(q) ||
+    (it['負責師傅']||'').toLowerCase().includes(q) ||
     (it['訂單編號']||'').toLowerCase().includes(q);
 
   const items = visibleItems();
