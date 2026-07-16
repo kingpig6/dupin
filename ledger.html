@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#175C4C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>語音帳簿</title>
+<link rel="manifest" href="ledger-manifest.json">
+<link rel="apple-touch-icon" href="ledger-icon.svg">
+<link rel="icon" href="ledger-icon.svg" type="image/svg+xml">
+<style>
+  /* ── 設計 tokens:帳簿風 ── */
+  :root {
+    --paper: #F4F6F3;      /* 淡灰綠紙面 */
+    --card: #FFFFFF;
+    --ink: #1E2B26;        /* 墨綠近黑 */
+    --ledger: #175C4C;     /* 帳簿綠(主色) */
+    --ledger-soft: #E3EFEA;
+    --red: #B3402E;        /* 支出紅 */
+    --green: #1E7A4F;      /* 收入綠 */
+    --line: #DDE4DF;
+    --dim: #6C7A73;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: var(--paper); color: var(--ink);
+    font-family: 'Noto Sans TC', system-ui, sans-serif;
+    display: flex; justify-content: center; padding-bottom: 120px;
+  }
+  .num { font-variant-numeric: tabular-nums; font-family: 'SF Mono', ui-monospace, monospace; }
+  button { font-family: inherit; }
+  button:focus-visible { outline: 3px solid var(--ledger); outline-offset: 2px; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(23,92,76,.35); }
+    70% { box-shadow: 0 0 0 22px rgba(23,92,76,0); }
+    100% { box-shadow: 0 0 0 0 rgba(23,92,76,0); }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  .wrap { width: 100%; max-width: 430px; padding: 24px 18px; }
+
+  header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .brand { font-size: 13px; letter-spacing: 3px; color: var(--ledger); font-weight: 700; }
+  .header-actions button {
+    background: none; border: none; color: var(--dim); font-size: 12px; cursor: pointer; padding: 4px 6px;
+  }
+
+  /* 月份切換 */
+  .month-nav { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 12px; }
+  .month-nav button {
+    background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--ledger);
+    width: 32px; height: 28px; font-size: 15px; cursor: pointer; line-height: 1;
+  }
+  .month-nav .label { font-size: 14px; font-weight: 700; min-width: 110px; text-align: center; }
+
+  /* 月度摘要 */
+  .summary { background: var(--ledger); color: #fff; border-radius: 16px; padding: 20px 22px; margin-bottom: 14px; }
+  .summary .cap { font-size: 12px; opacity: .75; }
+  .summary .big { font-size: 38px; font-weight: 700; line-height: 1.2; }
+  .summary .sub { display: flex; gap: 18px; margin-top: 8px; font-size: 13px; }
+  .summary .sub span { opacity: .85; }
+
+  /* 分類長條 */
+  .cats { background: var(--card); border-radius: 16px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid var(--line); }
+  .cat-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .cat-row .name { width: 62px; font-size: 13px; flex-shrink: 0; }
+  .cat-row .bar { flex: 1; height: 8px; background: var(--ledger-soft); border-radius: 4px; }
+  .cat-row .bar > div { height: 100%; background: var(--ledger); border-radius: 4px; }
+  .cat-row .amt { font-size: 13px; width: 76px; text-align: right; flex-shrink: 0; }
+
+  /* 待確認卡片 */
+  .pending { background: var(--card); border: 2px solid var(--ledger); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  .pending .heard { font-size: 12px; color: var(--dim); margin-bottom: 10px; word-break: break-all; }
+  .p-row { border-bottom: 1px dashed var(--line); padding: 8px 0; }
+  .p-line1 { display: flex; gap: 6px; align-items: center; }
+  .p-line2 { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .p-row input, .p-row select {
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 14px;
+    background: var(--paper); color: var(--ink); min-width: 0;
+  }
+  .p-row input:focus, .p-row select:focus { outline: none; border-color: var(--ledger); }
+  .p-item { flex: 1; }
+  .p-amount { width: 92px; text-align: right; }
+  .p-cat { flex: 1; }
+  .p-date { flex: 1; }
+  .p-type {
+    border: 1px solid var(--line); background: var(--paper); border-radius: 8px;
+    padding: 7px 10px; font-size: 13px; cursor: pointer; flex-shrink: 0; font-weight: 700;
+  }
+  .p-type.expense { color: var(--red); }
+  .p-type.income { color: var(--green); }
+  .p-del { background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 4px 6px; flex-shrink: 0; }
+  .p-actions { display: flex; gap: 10px; margin-top: 14px; }
+  .btn-confirm {
+    flex: 1; background: var(--ledger); color: #fff; border: none; border-radius: 10px;
+    padding: 12px 0; font-size: 15px; font-weight: 700; cursor: pointer;
+  }
+  .btn-cancel {
+    background: none; border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 18px; font-size: 14px; cursor: pointer; color: var(--dim);
+  }
+
+  /* 狀態列 */
+  .status { text-align: center; font-size: 14px; margin-bottom: 14px; min-height: 22px; color: var(--ledger); word-break: break-all; }
+  .status.err { color: var(--red); }
+
+  /* 帳目清單 */
+  .day-head {
+    display: flex; justify-content: space-between; font-size: 12px; color: var(--dim);
+    padding: 12px 4px 6px;
+  }
+  .entry {
+    display: flex; align-items: center; gap: 12px; background: var(--card);
+    border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--line);
+  }
+  .entry .emoji { font-size: 20px; }
+  .entry .mid { flex: 1; min-width: 0; }
+  .entry .item { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .entry .meta { font-size: 11px; color: var(--dim); }
+  .entry .amt { font-size: 15px; font-weight: 700; flex-shrink: 0; }
+  .entry .amt.expense { color: var(--red); }
+  .entry .amt.income { color: var(--green); }
+  .entry .del { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 16px; padding: 4px; }
+  .empty { text-align: center; color: var(--dim); font-size: 14px; padding: 36px 0; line-height: 1.8; }
+
+  /* 底部輸入區 */
+  .inputbar {
+    position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: center;
+    background: linear-gradient(transparent, var(--paper) 30%); padding: 24px 18px 18px;
+  }
+  .inputbar .inner { width: 100%; max-width: 430px; display: flex; gap: 10px; align-items: center; }
+  .inputbar input {
+    flex: 1; border: 1px solid var(--line); border-radius: 24px; padding: 13px 18px;
+    font-size: 15px; background: var(--card); color: var(--ink); outline: none; min-width: 0;
+  }
+  .inputbar input:focus { border-color: var(--ledger); }
+  .mic {
+    width: 62px; height: 62px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--ledger); color: #fff; font-size: 26px; flex-shrink: 0; transition: background .2s;
+  }
+  .mic.listening { background: var(--red); animation: pulse 1.4s infinite; }
+  .mic:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div>
+      <div class="brand">語音帳簿</div>
+      <div style="font-size:12px;color:var(--dim);margin-top:2px" id="todayLabel"></div>
+    </div>
+    <div class="header-actions">
+      <button id="exportBtn" hidden>匯出 CSV</button>
+      <button id="clearBtn" hidden>清空</button>
+    </div>
+  </header>
+
+  <div class="month-nav">
+    <button id="prevMonth" aria-label="上一個月">‹</button>
+    <span class="label" id="monthLabel"></span>
+    <button id="nextMonth" aria-label="下一個月">›</button>
+  </div>
+
+  <section class="summary">
+    <div class="cap" id="spentCap">本月支出</div>
+    <div class="big num" id="spentAmt">$0</div>
+    <div class="sub">
+      <span>收入 <b class="num" id="incomeAmt">$0</b></span>
+      <span>結餘 <b class="num" id="balanceAmt">$0</b></span>
+      <span id="countLabel">0 筆</span>
+    </div>
+  </section>
+
+  <section class="cats" id="catSection" hidden></section>
+
+  <section class="pending" id="pendingSection" hidden>
+    <div class="heard" id="pendingHeard"></div>
+    <div id="pendingRows"></div>
+    <div class="p-actions">
+      <button class="btn-confirm" id="confirmBtn">入帳 ✓</button>
+      <button class="btn-cancel" id="cancelBtn">取消</button>
+    </div>
+  </section>
+
+  <div class="status" id="statusLine" hidden></div>
+
+  <section id="listSection"></section>
+</div>
+
+<div class="inputbar">
+  <div class="inner">
+    <input id="textInput" placeholder="或用打字:晚餐牛肉麵150" autocomplete="off">
+    <button class="mic" id="micBtn" aria-label="開始語音記帳" hidden>🎙</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// 語音帳簿 — 個人記帳系統
+// 資料存在瀏覽器 localStorage(不上傳、僅存於本機裝置)
+// ═══════════════════════════════════════════════════════
+
+const STORAGE_KEY = 'ledger-entries-v1';
+
+const CATEGORIES = {
+  '餐飲': '🍜', '交通': '🚌', '購物': '🛍️', '娛樂': '🎮',
+  '居家': '🏠', '醫療': '💊', '收入': '💰', '其他': '📎',
+};
+
+// ── 狀態 ──
+let entries = [];        // {id, item, amount, category, type, date, raw, ts}
+let pending = null;      // 待確認的帳目陣列
+let listening = false;
+let recog = null;
+let viewYM = new Date().toISOString().slice(0, 7); // 目前檢視的月份 YYYY-MM
+
+// ── 儲存 ──
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) entries = JSON.parse(raw);
+  } catch (e) { entries = []; }
+}
+function persist() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  } catch (e) {
+    setStatus('儲存失敗,資料可能未保存', true);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// 中文記帳語句解析(本地規則,離線可用)
+// 「早餐50 捷運30」→ 兩筆;「昨天晚餐牛肉麵150」→ 換算日期
+// ═══════════════════════════════════════════════════════
+
+const CAT_KEYWORDS = {
+  '餐飲': ['早餐','午餐','晚餐','早午餐','宵夜','點心','下午茶','飯','麵','麥當勞','肯德基','摩斯','星巴克','咖啡','飲料','手搖','奶茶','珍奶','豆漿','蛋餅','便當','火鍋','燒烤','壽司','拉麵','披薩','漢堡','雞排','鹹酥雞','滷味','小吃','聚餐','吃','喝','餐','食'],
+  '交通': ['捷運','公車','客運','計程車','uber','高鐵','火車','台鐵','機票','船票','加油','油錢','停車','過路費','etag','機車','腳踏車','ubike','搭車','車票','車資','通勤'],
+  '購物': ['衣服','褲子','鞋','包包','網購','蝦皮','momo','淘寶','pchome','amazon','超商','全聯','家樂福','好市多','costco','日用品','化妝品','保養品','3c','手機','耳機','文具','禮物'],
+  '娛樂': ['電影','遊戲','課金','ktv','唱歌','演唱會','展覽','netflix','spotify','youtube','訂閱','旅遊','旅行','門票','住宿','飯店','民宿','露營','酒吧','桌遊','漫畫','小說'],
+  '居家': ['房租','租金','水費','電費','瓦斯','網路費','電話費','管理費','家具','家電','維修','清潔','洗衣','保險','稅'],
+  '醫療': ['看醫生','掛號','門診','診所','醫院','牙醫','藥','保健','維他命','健檢','眼鏡','復健','疫苗'],
+};
+const INCOME_KEYWORDS = ['薪水','薪資','月薪','年終','獎金','紅包','發票中','中獎','利息','股息','退款','退稅','報帳','入帳','進帳','賣掉','賣出','收到','兼職','外快','稿費'];
+
+// 中文數字 → 阿拉伯數字(支援 五十、三百二、一千五、一萬二、兩百)
+function cnToNum(s) {
+  const digits = { '零':0,'一':1,'二':2,'兩':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9 };
+  const units = { '十':10,'百':100,'千':1000,'萬':10000 };
+  let total = 0, section = 0, num = 0, lastUnit = 0;
+  for (const ch of s) {
+    if (ch in digits) { num = digits[ch]; }
+    else if (ch === '萬') { section = (section + num) * 10000 || 10000; total += section; section = 0; num = 0; lastUnit = 10000; }
+    else if (ch in units) {
+      const u = units[ch];
+      section += (num || 1) * u;
+      num = 0; lastUnit = u;
+    }
+  }
+  // 尾數簡寫:「一千五」= 1500、「三百二」= 320
+  if (num > 0) {
+    if (lastUnit >= 100) num *= lastUnit / 10;
+    section += num;
+  }
+  return total + section;
+}
+
+// 把句子裡的中文金額轉成數字(僅轉含十/百/千/萬、或後面接元/塊的,避免誤傷「三明治」)
+function normalizeAmounts(text) {
+  let t = text
+    .replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)) // 全形數字
+    .replace(/(\d),(\d{3})/g, '$1$2'); // 千分位逗號
+  t = t.replace(/[零一二兩三四五六七八九十百千萬]{2,}|[零一二兩三四五六七八九](?=[元塊圓])/g, (m) => {
+    if (!/[十百千萬]/.test(m) && !/^[零一二兩三四五六七八九]$/.test(m)) return m;
+    const n = cnToNum(m);
+    return n > 0 ? String(n) : m;
+  });
+  return t;
+}
+
+// 相對日期:「昨天早餐50」→ 換算 date 並移除該詞
+function extractDate(text) {
+  const d = new Date();
+  const iso = (dt) => {
+    const off = dt.getTimezoneOffset() * 60000;
+    return new Date(dt - off).toISOString().slice(0, 10);
+  };
+  let date = iso(d);
+  const rel = { '大前天': -3, '前天': -2, '昨天': -1, '今天': 0, '今日': 0 };
+  for (const [word, offset] of Object.entries(rel)) {
+    if (text.includes(word)) {
+      const dt = new Date(); dt.setDate(dt.getDate() + offset);
+      return { date: iso(dt), text: text.split(word).join('') };
+    }
+  }
+  // 「7月10日 / 7月10號」
+  const m1 = text.match(/(\d{1,2})月(\d{1,2})[日號]/);
+  if (m1) {
+    const dt = new Date(d.getFullYear(), +m1[1] - 1, +m1[2]);
+    return { date: iso(dt), text: text.replace(m1[0], '') };
+  }
+  return { date, text };
+}
+
+// 猜分類
+function guessCategory(text) {
+  const low = text.toLowerCase();
+  for (const kw of INCOME_KEYWORDS) if (low.includes(kw)) return { category: '收入', type: 'income' };
+  for (const [cat, kws] of Object.entries(CAT_KEYWORDS)) {
+    for (const kw of kws) if (low.includes(kw)) return { category: cat, type: 'expense' };
+  }
+  return { category: '其他', type: 'expense' };
+}
+
+// 清掉品項裡的贅字
+function cleanItem(s) {
+  return s
+    .replace(/^(我|花了|花|買了|付了|付|用了|給了|給|然後|還有|跟|和|加上|去|搭|坐|吃了|喝了|是|的|了)+/g, '')
+    .replace(/(花了|花|了|各|共|總共|一共)+$/g, '')
+    .replace(/[元塊圓$]+$/g, '')
+    .trim();
+}
+
+// 主解析:一句話 → 帳目陣列
+function parseText(input) {
+  const step1 = extractDate(input.trim());
+  const text = normalizeAmounts(step1.text);
+  const results = [];
+  // 以空白與標點切段
+  const segments = text.split(/[\s,,、;;。.!!??]+/).filter(Boolean);
+
+  const MEASURES = '杯個份支瓶顆張件雙盒包碗盤客次趟晚';
+  for (const seg of segments) {
+    // 逐一找出「文字 + 金額」的配對
+    const re = /([^\d]*?)(\d+(?:\.\d+)?)(?:\s*[元塊圓$])?/g;
+    // 單價 × 數量:「一杯60兩杯」「咖啡60三杯」
+    const qtyRe = new RegExp('^([2-9]\\d*|[兩二三四五六七八九十]+)[' + MEASURES + ']');
+    const matches = [];
+    let m, lastIdx = 0;
+    while ((m = re.exec(seg)) !== null) {
+      if (m.index === re.lastIndex) re.lastIndex++;
+      let itemRaw = m[1] || '';
+      const amount = parseFloat(m[2]);
+      if (!isFinite(amount) || amount <= 0) continue;
+      // 「一杯60」的「一杯」是量詞,不是品項的一部分
+      const unitM = itemRaw.match(new RegExp('(?:1|一)[' + MEASURES + ']\\s*$'));
+      if (unitM) itemRaw = itemRaw.slice(0, unitM.index);
+      // 金額後面接「兩杯 / 3個」→ 乘上數量
+      const qm = seg.slice(re.lastIndex).match(qtyRe);
+      let total = amount;
+      if (qm) {
+        total = amount * (/^\d/.test(qm[1]) ? parseInt(qm[1], 10) : cnToNum(qm[1]));
+        re.lastIndex += qm[0].length;
+      }
+      lastIdx = re.lastIndex;
+      matches.push({ itemRaw, amount: total });
+    }
+    // 最後一個金額後面剩下的文字(如「我花了200買遊戲」的「買遊戲」)也拿來判斷品項/分類
+    const leftover = seg.slice(lastIdx);
+    matches.forEach((mt, idx) => {
+      const isLast = idx === matches.length - 1;
+      const source = (mt.itemRaw + (isLast ? leftover : '')) || seg;
+      const guess = guessCategory(source);
+      const item = cleanItem(mt.itemRaw) || (isLast ? cleanItem(leftover) : '') || guess.category;
+      results.push({ item, amount: mt.amount, category: guess.category, type: guess.type, date: step1.date });
+    });
+    // 段落沒有數字但有文字 → 之後可手動補金額(整句解析都沒結果時才用)
+    if (!matches.length && seg.trim()) {
+      results.push({ item: cleanItem(seg) || seg, amount: 0, ...guessCategory(seg), date: step1.date, _noAmount: true });
+    }
+  }
+  // 只要有抓到金額,就丟掉沒金額的雜訊段;全都沒金額則保留讓使用者手動填
+  const withAmt = results.filter((r) => !r._noAmount);
+  const final = withAmt.length ? withAmt : results.slice(0, 1);
+  return final.map(({ _noAmount, ...r }) => r);
+}
+
+// ═══════════════════════════════════════════════════════
+// 語音辨識(Web Speech API,zh-TW)
+// ═══════════════════════════════════════════════════════
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function startListening() {
+  setStatus('');
+  if (!SR) return;
+  recog = new SR();
+  recog.lang = 'zh-TW';
+  recog.interimResults = true;
+  recog.continuous = false;
+  let final = '';
+  recog.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    setStatus((final + interim) || '聽取中,請說話…');
+  };
+  recog.onend = () => {
+    setListeningState(false);
+    if (final.trim()) handleParse(final.trim());
+    else setStatus('');
+  };
+  recog.onerror = (e) => {
+    setListeningState(false);
+    if (e.error === 'not-allowed') setStatus('麥克風權限被拒絕,請改用文字輸入', true);
+    else if (e.error !== 'aborted') setStatus('語音辨識失敗,請再試一次或用文字輸入', true);
+  };
+  setListeningState(true);
+  setStatus('聽取中,請說話…');
+  recog.start();
+}
+function stopListening() { recog && recog.stop(); }
+function setListeningState(on) {
+  listening = on;
+  const btn = document.getElementById('micBtn');
+  btn.classList.toggle('listening', on);
+  btn.textContent = on ? '■' : '🎙';
+  btn.setAttribute('aria-label', on ? '停止錄音' : '開始語音記帳');
+}
+
+// ── 解析 → 待確認 ──
+function handleParse(text) {
+  const items = parseText(text);
+  if (items.length === 0) {
+    setStatus('聽到了「' + text + '」,但沒抓到內容,再說一次試試?', true);
+    return;
+  }
+  setStatus('');
+  pending = items.map((it) => ({ ...it, id: crypto.randomUUID(), raw: text }));
+  render();
+}
+
+function confirmPending() {
+  const valid = pending.filter((p) => p.item && +p.amount > 0);
+  if (valid.length === 0) { setStatus('請至少填一筆有效金額', true); return; }
+  entries = [...valid.map((p) => ({ ...p, amount: +p.amount, ts: Date.now() })), ...entries];
+  pending = null;
+  persist();
+  setStatus('');
+  render();
+}
+
+// ═══════════════════════════════════════════════════════
+// 畫面渲染
+// ═══════════════════════════════════════════════════════
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => '$' + Number(n).toLocaleString('zh-TW');
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+function setStatus(msg, isErr) {
+  const el = $('statusLine');
+  el.hidden = !msg;
+  el.textContent = msg || '';
+  el.classList.toggle('err', !!isErr);
+}
+
+function shiftMonth(delta) {
+  const [y, m] = viewYM.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  viewYM = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  render();
+}
+
+function render() {
+  const nowYM = new Date().toISOString().slice(0, 7);
+  const [y, m] = viewYM.split('-');
+  $('monthLabel').textContent = y + ' 年 ' + (+m) + ' 月';
+  $('spentCap').textContent = viewYM === nowYM ? '本月支出' : (+m) + ' 月支出';
+
+  const monthEntries = entries.filter((e) => (e.date || '').startsWith(viewYM));
+  const spent = monthEntries.filter((e) => e.type !== 'income').reduce((s, e) => s + (+e.amount || 0), 0);
+  const income = monthEntries.filter((e) => e.type === 'income').reduce((s, e) => s + (+e.amount || 0), 0);
+  $('spentAmt').textContent = fmt(spent);
+  $('incomeAmt').textContent = fmt(income);
+  $('balanceAmt').textContent = (income - spent < 0 ? '−' : '') + fmt(Math.abs(income - spent));
+  $('countLabel').textContent = monthEntries.length + ' 筆';
+
+  // 分類長條
+  const byCat = {};
+  monthEntries.forEach((e) => {
+    if (e.type === 'income') return;
+    byCat[e.category] = (byCat[e.category] || 0) + (+e.amount || 0);
+  });
+  const catRows = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const maxCat = catRows[0]?.[1] || 1;
+  const catSec = $('catSection');
+  catSec.hidden = catRows.length === 0;
+  catSec.innerHTML = catRows.map(([cat, amt]) =>
+    '<div class="cat-row">' +
+      '<span class="name">' + (CATEGORIES[cat] || '📎') + ' ' + esc(cat) + '</span>' +
+      '<div class="bar"><div style="width:' + ((amt / maxCat) * 100).toFixed(1) + '%"></div></div>' +
+      '<span class="amt num">' + fmt(amt) + '</span>' +
+    '</div>'
+  ).join('');
+
+  renderPending();
+  renderList(monthEntries);
+
+  $('clearBtn').hidden = entries.length === 0;
+  $('exportBtn').hidden = entries.length === 0;
+}
+
+function renderPending() {
+  const sec = $('pendingSection');
+  sec.hidden = !pending;
+  if (!pending) return;
+  $('pendingHeard').textContent = '聽到:「' + pending[0].raw + '」— 確認或修改後入帳';
+  const catOpts = (sel) => Object.keys(CATEGORIES)
+    .map((c) => '<option value="' + c + '"' + (c === sel ? ' selected' : '') + '>' + (CATEGORIES[c]) + ' ' + c + '</option>').join('');
+  $('pendingRows').innerHTML = pending.map((p, i) =>
+    '<div class="p-row">' +
+      '<div class="p-line1">' +
+        '<button class="p-type ' + p.type + '" data-i="' + i + '" data-act="type">' + (p.type === 'income' ? '收入' : '支出') + '</button>' +
+        '<input class="p-item" data-i="' + i + '" data-field="item" value="' + esc(p.item) + '" placeholder="品項">' +
+        '<input class="p-amount num" data-i="' + i + '" data-field="amount" type="number" inputmode="decimal" min="0" value="' + (p.amount || '') + '" placeholder="金額">' +
+        '<button class="p-del" data-i="' + i + '" data-act="del" aria-label="移除此筆">×</button>' +
+      '</div>' +
+      '<div class="p-line2">' +
+        '<select class="p-cat" data-i="' + i + '" data-field="category">' + catOpts(p.category) + '</select>' +
+        '<input class="p-date" data-i="' + i + '" data-field="date" type="date" value="' + esc(p.date) + '">' +
+      '</div>' +
+    '</div>'
+  ).join('');
+}
+
+function renderList(monthEntries) {
+  const sec = $('listSection');
+  if (entries.length === 0 && !pending) {
+    sec.innerHTML = '<div class="empty">還沒有帳目。<br>按下方麥克風,說「午餐滷肉飯90」試試。</div>';
+    return;
+  }
+  if (monthEntries.length === 0) {
+    sec.innerHTML = '<div class="empty">這個月沒有帳目。</div>';
+    return;
+  }
+  // 依日期分組(新到舊)
+  const byDate = {};
+  monthEntries.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const dates = Object.keys(byDate).sort().reverse();
+  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+  sec.innerHTML = dates.map((date) => {
+    const list = byDate[date].slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const daySpent = list.filter((e) => e.type !== 'income').reduce((s, e) => s + (+e.amount || 0), 0);
+    const d = new Date(date + 'T00:00:00');
+    const head = (d.getMonth() + 1) + '月' + d.getDate() + '日 週' + weekdays[d.getDay()];
+    return '<div class="day-head"><span>' + head + '</span><span class="num">' + (daySpent ? '支出 ' + fmt(daySpent) : '') + '</span></div>' +
+      list.map((e) =>
+        '<div class="entry">' +
+          '<span class="emoji">' + (CATEGORIES[e.category] || '📎') + '</span>' +
+          '<div class="mid">' +
+            '<div class="item">' + esc(e.item) + '</div>' +
+            '<div class="meta">' + esc(e.category) + '</div>' +
+          '</div>' +
+          '<b class="amt num ' + (e.type === 'income' ? 'income' : 'expense') + '">' +
+            (e.type === 'income' ? '+' : '−') + fmt(e.amount) + '</b>' +
+          '<button class="del" data-id="' + e.id + '" aria-label="刪除">×</button>' +
+        '</div>'
+      ).join('');
+  }).join('');
+}
+
+// ── 匯出 CSV ──
+function exportCSV() {
+  const header = '日期,品項,分類,類型,金額\n';
+  const rows = entries.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).map((e) =>
+    [e.date, '"' + String(e.item).replace(/"/g, '""') + '"', e.category,
+     e.type === 'income' ? '收入' : '支出', e.amount].join(',')
+  ).join('\n');
+  const blob = new Blob(['﻿' + header + rows], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '帳簿_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ═══════════════════════════════════════════════════════
+// 事件綁定
+// ═══════════════════════════════════════════════════════
+$('prevMonth').addEventListener('click', () => shiftMonth(-1));
+$('nextMonth').addEventListener('click', () => shiftMonth(1));
+$('confirmBtn').addEventListener('click', confirmPending);
+$('cancelBtn').addEventListener('click', () => { pending = null; render(); });
+$('clearBtn').addEventListener('click', () => {
+  if (confirm('確定要清空全部帳目嗎?此動作無法復原。')) { entries = []; persist(); render(); }
+});
+$('exportBtn').addEventListener('click', exportCSV);
+
+$('micBtn').addEventListener('click', () => (listening ? stopListening() : startListening()));
+
+$('textInput').addEventListener('keydown', (ev) => {
+  const v = ev.target.value.trim();
+  if (ev.key === 'Enter' && v) { handleParse(v); ev.target.value = ''; }
+});
+
+// 待確認卡片:輸入即時寫回 pending
+$('pendingRows').addEventListener('input', (ev) => {
+  const t = ev.target;
+  if (!pending || t.dataset.i === undefined || !t.dataset.field) return;
+  pending[+t.dataset.i][t.dataset.field] = t.value;
+});
+$('pendingRows').addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-act]');
+  if (!t || !pending) return;
+  const i = +t.dataset.i;
+  if (t.dataset.act === 'type') {
+    pending[i].type = pending[i].type === 'income' ? 'expense' : 'income';
+    pending[i].category = pending[i].type === 'income' ? '收入' : (pending[i].category === '收入' ? '其他' : pending[i].category);
+    renderPending();
+  } else if (t.dataset.act === 'del') {
+    pending.splice(i, 1);
+    if (pending.length === 0) pending = null;
+    render();
+  }
+});
+
+// 帳目刪除(事件委派)
+$('listSection').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.del');
+  if (!btn) return;
+  entries = entries.filter((e) => e.id !== btn.dataset.id);
+  persist();
+  render();
+});
+
+// ── 初始化 ──
+if (!SR) {
+  $('textInput').placeholder = '此瀏覽器不支援語音,請打字記帳';
+} else {
+  $('micBtn').hidden = false;
+}
+$('todayLabel').textContent = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+load();
+render();
+</script>
+</body>
+</html>
