@@ -468,9 +468,18 @@ function renderCustomerDetail() {
     const prog  = it['進度'] || '待施工';
     const color = progColor[prog] || 'bg-gray-600';
     const payColor = it['收款狀態'] === '已收款' ? 'bg-green-700' : 'bg-red-900';
+    const showInvSel = section === 'done' && isAdmin();
     return `
     <div class="card" id="itemCard_${it['工作ID']}">
       <div class="flex justify-between items-start">
+        ${showInvSel ? `
+        <label class="shrink-0 mr-3 mt-1" onclick="event.stopPropagation()">
+          <input type="checkbox" class="invSel" checked
+            data-id="${String(it['工作ID']).replace(/"/g,'&quot;')}"
+            data-amt="${Number(it['金額'])||0}"
+            onchange="updateInvoiceBar()"
+            style="width:22px;height:22px;accent-color:#f59e0b;cursor:pointer;"/>
+        </label>` : ''}
         <div class="flex-1 min-w-0">
           <div class="font-semibold">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
           <div class="text-xs text-gray-400 mb-1">
@@ -532,11 +541,15 @@ function renderCustomerDetail() {
   const isInvoiced = state.viewSection === 'invoiced';
   let actionBtns = '';
   if (isDone && its.length > 0 && isAdmin()) {
-    const allIds = its.map(it => it['工作ID']);
-    const idsArg = "[" + allIds.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
-    actionBtns += `<button class="btn btn-primary text-sm mt-1 w-full"
-      onclick="openInvoice(${idsArg})">
-      開請款單（${allIds.length} 件）
+    const total = its.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+    actionBtns += `
+    <div class="flex justify-between items-center mb-1">
+      <button class="text-xs text-gray-400 underline" onclick="toggleAllInvSel()">全選／全不選</button>
+      <span class="text-xs text-gray-400">勾選要開請款單的項目</span>
+    </div>
+    <button id="invoiceBtn" class="btn btn-primary text-sm mt-1 w-full"
+      onclick="openInvoiceSelected(this)">
+      開請款單（${its.length} 件 · $${total.toLocaleString()}）
     </button>`;
   }
   if ((isDone || isInvoiced) && its.length > 0) {
@@ -921,6 +934,39 @@ async function batchMarkPaid(itemIds) {
     api('update', '工作項目', { key: id, data: { '收款狀態': '已收款' } })
   ));
   showToast(`已收款完成（${itemIds.length} 件）`);
+}
+
+// ── 請款單勾選 ───────────────────────────────
+function updateInvoiceBar() {
+  const boxes = Array.from(document.querySelectorAll('.invSel'));
+  const sel   = boxes.filter(b => b.checked);
+  const total = sel.reduce((s, b) => s + Number(b.dataset.amt || 0), 0);
+  const btn   = document.getElementById('invoiceBtn');
+  if (!btn) return;
+  if (!sel.length) {
+    btn.disabled = true;
+    btn.textContent = '請先勾選項目';
+    btn.classList.add('opacity-50');
+  } else {
+    btn.disabled = false;
+    btn.classList.remove('opacity-50');
+    btn.textContent = `開請款單（${sel.length} 件 · $${total.toLocaleString()}）`;
+  }
+}
+
+function toggleAllInvSel() {
+  const boxes = Array.from(document.querySelectorAll('.invSel'));
+  const allChecked = boxes.every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allChecked; });
+  updateInvoiceBar();
+}
+
+function openInvoiceSelected(btn) {
+  const ids = Array.from(document.querySelectorAll('.invSel'))
+    .filter(b => b.checked)
+    .map(b => b.dataset.id);
+  if (!ids.length) { showToast('請先勾選項目'); return; }
+  openInvoice(ids);
 }
 
 // ── PDF 操作 ─────────────────────────────────
