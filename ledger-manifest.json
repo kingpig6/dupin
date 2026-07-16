@@ -1,0 +1,18 @@
+{
+  "name": "語音帳簿",
+  "short_name": "語音帳簿",
+  "description": "個人記帳系統:語音或打字一句話入帳",
+  "start_url": "/dupin/ledger.html",
+  "display": "standalone",
+  "background_color": "#F4F6F3",
+  "theme_color": "#175C4C",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "ledger-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
