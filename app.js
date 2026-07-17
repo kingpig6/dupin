@@ -33,6 +33,7 @@ let state = {
   fixedTemplates: [],   // 固定支出模板
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
+  viewWorker: null,   // 目前查看的師傅（進行中依師傅分組時）
   viewSection: null,  // 從哪個區塊進入（active/done/invoiced/paid）
   editCustomer: null,
   loading: false,
@@ -276,7 +277,7 @@ function render() {
     case 'customerDetail': {
       const sectionLabel = { active:'進行中', done:'完工交貨', invoiced:'已開請款單', paid:'已交貨收款' };
       const secTag = state.viewSection ? ` · ${sectionLabel[state.viewSection]||''}` : '';
-      title.textContent = (state.viewCustomer || '工作項目') + secTag;
+      title.textContent = (state.viewCustomer || state.viewWorker || '工作項目') + secTag;
       back.classList.remove('hidden');
       actions.innerHTML = `<button class="btn btn-ghost text-sm" onclick="showView('newOrder')">＋ 新增</button>`;
       app.innerHTML = renderCustomerDetail();
@@ -399,6 +400,40 @@ function renderOrdersContent() {
     </div>`;
   };
 
+  // 進行中：依師傅分組
+  const groupByWorker = items => {
+    const map = {};
+    items.forEach(it => {
+      const w = String(it['負責師傅'] || '').trim() || '(未指派)';
+      if (!map[w]) map[w] = [];
+      map[w].push(it);
+    });
+    // 未指派排最前，其餘按件數多到少
+    return Object.entries(map).sort((a, b) => {
+      if (a[0] === '(未指派)') return -1;
+      if (b[0] === '(未指派)') return 1;
+      return b[1].length - a[1].length;
+    });
+  };
+
+  const workerCard = (worker, items) => {
+    const total  = items.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+    const badges = items.slice(0, 8).map(it => `
+      <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-200">
+        ${it['客戶'] || ''}·${it['品名'] || '-'}
+        <span class="w-1.5 h-1.5 rounded-full ${progColor[it['進度']] || 'bg-gray-500'}"></span>
+      </span>`).join('');
+    const more = items.length > 8 ? `<span class="text-xs text-gray-500">+${items.length - 8}</span>` : '';
+    return `
+    <div class="card cursor-pointer" onclick="openWorker('${worker.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">
+      <div class="flex justify-between items-start mb-0.5">
+        <span class="text-lg font-bold">${worker === '(未指派)' ? '🔧 未指派' : '👤 ' + worker}</span>
+        <span class="text-gray-400 text-sm mt-1">${items.length} 件${isAdmin() ? ` · <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>` : ''}</span>
+      </div>
+      <div class="flex flex-wrap gap-1 mb-1">${badges}${more}</div>
+    </div>`;
+  };
+
   const sectionHeader = (label, count, key) => `
     <div class="flex justify-between items-center cursor-pointer py-2 mt-2" onclick="toggleSection('${key}')">
       <span class="section-title mb-0">${label}（${count}）</span>
@@ -415,9 +450,31 @@ function renderOrdersContent() {
     </div>`;
   };
 
+  // 進行中區塊：標題列含 客戶/師傅 分組切換
+  const activeHeader = `
+    <div class="flex justify-between items-center py-2 mt-2">
+      <span class="section-title mb-0 cursor-pointer" onclick="toggleSection('active')">進行中（${activeItems.length}）</span>
+      <div class="flex items-center gap-2">
+        <div class="flex rounded-full bg-gray-800 border border-gray-700 overflow-hidden text-xs">
+          <button onclick="setActiveGroupBy('customer')"
+            class="px-3 py-1 ${activeGroupBy === 'customer' ? 'bg-amber-500 text-gray-900 font-bold' : 'text-gray-400'}">客戶</button>
+          <button onclick="setActiveGroupBy('worker')"
+            class="px-3 py-1 ${activeGroupBy === 'worker' ? 'bg-amber-500 text-gray-900 font-bold' : 'text-gray-400'}">師傅</button>
+        </div>
+        <span id="arrow-active" class="text-gray-400 text-lg cursor-pointer" onclick="toggleSection('active')">${sectionOpen.active ? '▲' : '▼'}</span>
+      </div>
+    </div>`;
+
+  const activeBody = activeGroupBy === 'worker'
+    ? `<div id="section-active" style="display:${sectionOpen.active ? '' : 'none'}">
+        ${groupByWorker(activeItems).map(([w, its]) => workerCard(w, its)).join('')
+          || '<p class="text-gray-500 text-sm mb-4">暫無進行中工作</p>'}
+      </div>`
+    : sectionBody(activeItems, 'active', '暫無進行中工作', 'active');
+
   return `
-  ${sectionHeader('進行中', activeItems.length, 'active')}
-  ${sectionBody(activeItems, 'active', '暫無進行中工作', 'active')}
+  ${activeHeader}
+  ${activeBody}
 
   ${sectionHeader('完工交貨（未開請款單）', doneItems.length, 'done')}
   ${sectionBody(doneItems, 'done', '暫無待開請款單工作', 'done')}
@@ -430,8 +487,27 @@ function renderOrdersContent() {
 }
 
 function openCustomer(name, section) {
+  state.viewWorker  = null;
   state.viewSection = section || null;
   showView('customerDetail', name);
+}
+
+// 進行中分組模式：customer / worker
+let activeGroupBy = localStorage.getItem('dupin_active_groupby') || 'customer';
+
+function setActiveGroupBy(mode) {
+  activeGroupBy = mode;
+  localStorage.setItem('dupin_active_groupby', mode);
+  sectionOpen.active = true; // 切換分組時自動展開
+  const el = document.getElementById('orderListContent');
+  if (el) el.innerHTML = renderOrdersContent();
+}
+
+function openWorker(name) {
+  state.viewWorker   = name;
+  state.viewCustomer = null;
+  state.viewSection  = 'active';
+  showView('customerDetail');
 }
 
 // ── 客戶詳細（工作項目列表）────────────────
@@ -447,7 +523,15 @@ function renderCustomerDetail() {
     paid:     it => it['收款狀態'] === '已收款',
   };
   const filterFn = section && sectionFilter[section] ? sectionFilter[section] : () => true;
-  const its = visibleItems().filter(it => it['客戶'] === name && filterFn(it));
+  const worker = state.viewWorker;
+  const its = visibleItems().filter(it => {
+    if (!filterFn(it)) return false;
+    if (worker) {
+      const w = String(it['負責師傅'] || '').trim();
+      return worker === '(未指派)' ? !w : w === worker;
+    }
+    return it['客戶'] === name;
+  });
   const subtotal = its.reduce((s, it) => s + Number(it['金額'] || 0), 0);
 
   const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-600', '完成': 'bg-green-600' };
@@ -481,6 +565,7 @@ function renderCustomerDetail() {
             style="width:22px;height:22px;accent-color:#f59e0b;cursor:pointer;"/>
         </label>` : ''}
         <div class="flex-1 min-w-0">
+          ${worker ? `<div class="text-xs text-amber-400 font-semibold">${it['客戶'] || ''}</div>` : ''}
           <div class="font-semibold">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
           <div class="text-xs text-gray-400 mb-1">
             ${it['數量']} × $${Number(it['單價']).toLocaleString()}
@@ -567,7 +652,7 @@ function renderCustomerDetail() {
   return `
   <div class="card mb-3">
     <div class="flex justify-between items-center">
-      <div class="font-bold text-lg">${name}</div>
+      <div class="font-bold text-lg">${worker ? (worker === '(未指派)' ? '🔧 未指派' : '👤 ' + worker) : name}</div>
       <div class="text-amber-400 font-bold text-lg">$${subtotal.toLocaleString()}</div>
     </div>
   </div>
