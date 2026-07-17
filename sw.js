@@ -1,5 +1,5 @@
-const CACHE = 'dupin-v45';
-const ASSETS = ['/dupin/', '/dupin/index.html', '/dupin/app.js?v=45', '/dupin/manifest.json', '/dupin/icon.svg'];
+const CACHE = 'dupin-v46';
+const ASSETS = ['/dupin/', '/dupin/index.html', '/dupin/app.js?v=46', '/dupin/manifest.json', '/dupin/icon.svg'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();

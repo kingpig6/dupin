@@ -73,11 +73,9 @@ function handleRequest(e) {
       if (writeActions.indexOf(action) >= 0) {
         if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
         if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
-        // 僅 admin：刪除、開請款單
+        // 僅 admin：刪除、開請款單（員工可新增與修改工作項目，但不可刪除）
         if (action === 'delete' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         if (action === 'generateInvoice' && body.type === 'invoice' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
-        // 員工（非 admin）不可修改工作項目（僅能新增／開單）
-        if (action === 'update' && sheet === '工作項目' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         // 員工（非 admin）開單時，負責師傅只能填自己或留空，避免指派給別人
         if (sheet === '工作項目' && role !== 'admin') {
           const myName = roleInfo.name || '';

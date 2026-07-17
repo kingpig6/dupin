@@ -594,27 +594,26 @@ function renderCustomerDetail() {
             return `<button onclick="openLightbox([${urlsArg}],0)" class="text-xs text-amber-400 mt-1 flex items-center gap-1">📷 ${photos.length} 張完工照片</button>`;
           })()}
           <div class="flex items-center gap-2 flex-wrap mt-1">
-            ${isAdmin() ? `
             <select onchange="cycleProgress('${it['工作ID']}',this.value)"
               class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
               <option value="待施工" ${prog==='待施工'?'selected':''}>待施工</option>
               <option value="施工中" ${prog==='施工中'?'selected':''}>施工中</option>
               <option value="完成"   ${prog==='完成'?'selected':''}>完成</option>
             </select>
+            ${isAdmin() ? `
             <select onchange="updateItemField('${it['工作ID']}','收款狀態',this.value)"
               class="${payColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
               <option value="未收款" ${(it['收款狀態']||'未收款')==='未收款'?'selected':''}>未收款</option>
               <option value="已收款" ${it['收款狀態']==='已收款'?'selected':''}>已收款</option>
             </select>
             ` : `
-            <span class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${prog}</span>
             <span class="${payColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${it['收款狀態']||'未收款'}</span>
             `}
           </div>
         </div>
         <div class="flex flex-col items-end gap-2 ml-3 shrink-0">
           <span class="text-amber-400 font-bold">$${Number(it['金額'] || 0).toLocaleString()}</span>
-          ${isAdmin() ? `<button onclick="editItem('${it['工作ID']}')" class="text-amber-400 text-sm">✎</button>` : ''}
+          <button onclick="editItem('${it['工作ID']}')" class="text-amber-400 text-sm">✎</button>
           ${isAdmin() ? `<button onclick="deleteItem('${it['工作ID']}')" class="text-amber-400 text-sm">✕</button>` : ''}
         </div>
       </div>
