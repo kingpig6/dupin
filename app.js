@@ -305,6 +305,7 @@ function render() {
       title.textContent = isAdmin() ? '業績統計' : '我的傭金';
       back.classList.add('hidden');
       actions.innerHTML = '';
+      if (!isAdmin()) adminCommissionWorker = null;
       app.innerHTML = isAdmin() ? renderStats() : renderMyCommission();
       if (!isAdmin()) requestAnimationFrame(startCommissionAnimations);
       break;
@@ -1844,7 +1845,43 @@ function renderStats() {
     <span class="section-title mb-0">人員費用－已支付</span>
     <span id="arrow-workerFeePaid" class="text-gray-400 text-lg">▼</span>
   </div>
-  <div id="workerFeePaid" class="hidden mb-4"></div>`;
+  <div id="workerFeePaid" class="hidden mb-4"></div>
+
+  <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleWorkerCommission()">
+    <span class="section-title mb-0">員工傭金頁</span>
+    <span id="arrow-workerCommission" class="text-gray-400 text-lg">▼</span>
+  </div>
+  <div id="workerCommission" class="hidden mb-4">
+    <select id="wc_worker" class="mb-3" onchange="renderWorkerCommission()">
+      ${state.workers.map(w => `<option value="${w}">${w}</option>`).join('')}
+    </select>
+    <div id="workerCommissionBody"></div>
+  </div>`;
+}
+
+// ── 管理員：檢視任一員工的傭金頁 ─────────────
+function toggleWorkerCommission() {
+  const el = document.getElementById('workerCommission');
+  const ar = document.getElementById('arrow-workerCommission');
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) {
+    renderWorkerCommission();
+  } else {
+    adminCommissionWorker = null;
+  }
+}
+
+function renderWorkerCommission() {
+  const sel = document.getElementById('wc_worker');
+  if (!sel || !sel.value) return;
+  adminCommissionWorker = sel.value;
+  const body = document.getElementById('workerCommissionBody');
+  if (body) {
+    body.innerHTML = renderMyCommission();
+    requestAnimationFrame(startCommissionAnimations);
+  }
+  adminCommissionWorker = sel.value; // 保持選取狀態供後續查詢（已結款查詢等）使用
 }
 
 // ── 傭金遊戲化：段位／等級（每 $1萬 一級，每 3 級一段）──
@@ -1893,7 +1930,7 @@ function monthRange(offset) {
 function computeMonthlyStreak() {
   const STREAK_TARGET = 30000;
   const monthly = {};
-  state.myFees.forEach(it => {
+  commissionFees().forEach(it => {
     if (it['進度'] !== '完成' || !it['完工日期']) return;
     const key = String(it['完工日期']).slice(0, 7);
     monthly[key] = (monthly[key] || 0) + Number(it['費用金額'] || 0);
@@ -1911,6 +1948,7 @@ function computeMonthlyStreak() {
 
 let _newHighShown = false;
 function maybeShowNewHighToast(thisMonthTotal, lastMonthTotal) {
+  if (adminCommissionWorker) return; // 管理員檢視他人時不跳提示
   if (_newHighShown || lastMonthTotal <= 0 || thisMonthTotal <= lastMonthTotal) return;
   _newHighShown = true;
   setTimeout(() => showToast('本月創新高 🎉', 'success'), 500);
@@ -1970,20 +2008,29 @@ function startCommissionAnimations() {
   if (fill) requestAnimationFrame(() => { fill.style.width = fill.dataset.pct + '%'; });
 }
 
-// ── 我的傭金（一般員工專用）──────────────────
+// ── 我的傭金（員工專用；管理員可透過 adminCommissionWorker 檢視任一員工）──
+let adminCommissionWorker = null; // admin 在業績頁選擇檢視的員工姓名；null = 員工本人模式
+
+function commissionFees() {
+  if (adminCommissionWorker) {
+    return state.items.filter(it => String(it['負責師傅'] || '').trim() === adminCommissionWorker);
+  }
+  return state.myFees;
+}
+
 function renderMyCommission() {
   const thisYear = new Date().getFullYear();
 
-  const unfinished = state.myFees.filter(it => it['進度'] !== '完成');
+  const unfinished = commissionFees().filter(it => it['進度'] !== '完成');
   const unfinishedTotal = unfinished.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
 
   const { start: mStart, end: mEnd } = monthRange(0);
-  const finishedThisMonth = state.myFees.filter(it => it['進度'] === '完成' && it['完工日期'] >= mStart && it['完工日期'] <= mEnd);
+  const finishedThisMonth = commissionFees().filter(it => it['進度'] === '完成' && it['完工日期'] >= mStart && it['完工日期'] <= mEnd);
   const finishedThisMonthTotal = finishedThisMonth.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
   const thisMonthTotal = unfinishedTotal + finishedThisMonthTotal;
 
   const { start: lStart, end: lEnd } = monthRange(-1);
-  const lastMonthTotal = state.myFees
+  const lastMonthTotal = commissionFees()
     .filter(it => it['進度'] === '完成' && it['完工日期'] >= lStart && it['完工日期'] <= lEnd)
     .reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
 
@@ -1998,7 +2045,7 @@ function renderMyCommission() {
   const unfinishedDeg = thisMonthTotal > 0 ? (unfinishedTotal / thisMonthTotal) * totalDeg : 0;
   const ringGradient = `conic-gradient(#f59e0b 0deg ${unfinishedDeg}deg, #fbbf24 ${unfinishedDeg}deg ${totalDeg}deg, #0f172a ${totalDeg}deg 360deg)`;
 
-  const pending = state.myFees.filter(it => it['進度'] === '完成' && it['費用支付狀態'] === '未支付');
+  const pending = commissionFees().filter(it => it['進度'] === '完成' && it['費用支付狀態'] === '未支付');
   const pendingTotal = pending.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
 
   return `
@@ -2087,7 +2134,7 @@ function setMyCommissionMonth() {
 function queryMyCommission() {
   const from = document.getElementById('mc_from').value;
   const to   = document.getElementById('mc_to').value;
-  const paid = state.myFees.filter(it => {
+  const paid = commissionFees().filter(it => {
     const d = it['費用支付日期'] || '';
     return it['費用支付狀態'] === '已支付' && (!from || (d >= from && d <= to));
   });
