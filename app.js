@@ -1884,33 +1884,35 @@ function renderWorkerCommission() {
   adminCommissionWorker = sel.value; // 保持選取狀態供後續查詢（已結款查詢等）使用
 }
 
-// ── 傭金遊戲化：段位／等級（每 $1萬 一級，每 3 級一段）──
+// ── 傭金遊戲化：12 個搞笑等級（每 $1萬 一級）──
 const RANK_THRESHOLDS = [
-  { min: 0,      rank: '學徒',   level: 0    },
-  { min: 10000,  rank: '學徒',   level: 1    },
-  { min: 20000,  rank: '學徒',   level: 2    },
-  { min: 30000,  rank: '學徒',   level: 3    },
-  { min: 40000,  rank: '師傅',   level: 1    },
-  { min: 50000,  rank: '師傅',   level: 2    },
-  { min: 60000,  rank: '師傅',   level: 3    },
-  { min: 70000,  rank: '大師傅', level: 1    },
-  { min: 80000,  rank: '大師傅', level: 2    },
-  { min: 90000,  rank: '大師傅', level: 3    },
-  { min: 110000, rank: '大師',   level: null },
+  { min: 0,      rank: '掃地的',     desc: '目前對本店的貢獻：地板很乾淨' },
+  { min: 10000,  rank: '遮膠帶童工', desc: '貼了三小時，撕下來的時候最快樂' },
+  { min: 20000,  rank: '砂紙戰士',   desc: '指紋已磨平，手機解鎖只能靠密碼' },
+  { min: 30000,  rank: '噴霧吸太多', desc: '講話開始有創意，建議戴好口罩' },
+  { min: 40000,  rank: '手抖美學家', desc: '那不是失誤，是限量版紋理' },
+  { min: 50000,  rank: '垂流大師',   desc: '垂流控制自如——大部分時候' },
+  { min: 60000,  rank: '勉強能看',   desc: '老闆看了三秒，點頭離開，沒罵人' },
+  { min: 70000,  rank: '老闆免驚',   desc: '交給你，老闆終於敢去睡午覺' },
+  { min: 80000,  rank: '客人指定',   desc: '「我要上次那個師傅做的」——說的就是你' },
+  { min: 90000,  rank: '傳說塗裝手', desc: '同行打聽你的名字，老闆假裝沒聽到' },
+  { min: 100000, rank: '人間國寶',   desc: '政府還沒認證，但本店已認證' },
+  { min: 110000, rank: '獨品之神',   desc: '漆會自己聽話。本月請客雞排', isMax: true },
 ];
 
 function getRankInfo(amount) {
-  let cur = RANK_THRESHOLDS[0];
-  let next = RANK_THRESHOLDS[1] || null;
+  let idx = 0;
   for (let i = 0; i < RANK_THRESHOLDS.length; i++) {
-    if (amount >= RANK_THRESHOLDS[i].min) { cur = RANK_THRESHOLDS[i]; next = RANK_THRESHOLDS[i + 1] || null; }
+    if (amount >= RANK_THRESHOLDS[i].min) idx = i;
     else break;
   }
-  const isMax = cur.level === null;
+  const cur  = RANK_THRESHOLDS[idx];
+  const next = RANK_THRESHOLDS[idx + 1] || null;
+  const isMax = !!cur.isMax;
   const floor = cur.min;
   const ceil  = next ? next.min : floor;
   const pct   = isMax ? 100 : Math.min(100, Math.max(0, ((amount - floor) / (ceil - floor)) * 100));
-  return { rank: cur.rank, level: cur.level, isMax, floor, ceil, pct };
+  return { rank: cur.rank, desc: cur.desc, level: idx + 1, isMax, floor, ceil, pct };
 }
 
 // 雙環目標：每 $3萬 一階，達成後自動變成下一階
@@ -2054,7 +2056,10 @@ function renderMyCommission() {
     <div class="xp-top">
       <div class="xp-lv-row">
         <div class="lv-badge">${rank.isMax ? '★' : 'Lv' + rank.level}</div>
-        <div class="lv-name">${rank.isMax ? rank.rank : rank.rank + ' ' + rank.level + '級'}</div>
+        <div>
+          <div class="lv-name">${rank.rank}${rank.isMax ? ' ★' : ''}</div>
+          <div class="text-xs text-gray-500">${rank.desc || ''}</div>
+        </div>
       </div>
       <div class="xp-amt count-up" data-target="${thisMonthTotal}">$0</div>
     </div>
