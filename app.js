@@ -736,9 +736,9 @@ function editItem(id) {
       <input id="ei_name"  value="${it['品名']||''}"       placeholder="品名"/>
       <input id="ei_spec"  value="${it['規格']||''}"       placeholder="規格"/>
       <input id="ei_qty"   value="${it['數量']||1}"        type="number" placeholder="數量"
-        oninput="document.getElementById('ei_amt').textContent='$'+((this.value||0)*(document.getElementById('ei_price').value||0)).toLocaleString()"/>
+        oninput="document.getElementById('ei_amt').textContent='$'+((this.value||0)*(document.getElementById('ei_price').value||0)).toLocaleString();onEditFeeTypeChange()"/>
       <input id="ei_price" value="${it['單價']||''}"       type="number" placeholder="單價"
-        oninput="document.getElementById('ei_amt').textContent='$'+((document.getElementById('ei_qty').value||1)*this.value).toLocaleString()"/>
+        oninput="document.getElementById('ei_amt').textContent='$'+((document.getElementById('ei_qty').value||1)*this.value).toLocaleString();onEditFeeTypeChange()"/>
       <input id="ei_plate"  value="${it['車號']||''}"      placeholder="車號（選填）"/>
       <select id="ei_worker" onchange="onEditFeeTypeChange()">
         <option value="">負責師傅（選填）</option>
@@ -797,6 +797,8 @@ function editItem(id) {
     ${batchNo ? `<button class="btn btn-ghost text-sm w-full mt-3" onclick="openWorkOrder(${batchArg})">
       生產工單 ${batchNo}（${batchIds.length} 件）
     </button>` : ''}`;
+  // 抽成類型：以目前 數量×單價 重算費用（修正舊資料只按單價算的金額）
+  if (it['費用類型'] === '抽成') onEditFeeTypeChange();
 }
 
 async function saveItem(id, btn) {
