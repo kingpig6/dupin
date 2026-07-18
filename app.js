@@ -1937,7 +1937,7 @@ function computeMonthlyStreak() {
   commissionFees().forEach(it => {
     if (it['進度'] !== '完成' || !it['完工日期']) return;
     const key = String(it['完工日期']).slice(0, 7);
-    monthly[key] = (monthly[key] || 0) + Number(it['費用金額'] || 0);
+    monthly[key] = (monthly[key] || 0) + effectiveFee(it);
   });
   const now = new Date();
   const keyFor = i => {
@@ -2015,6 +2015,16 @@ function startCommissionAnimations() {
 // ── 我的傭金（員工專用；管理員可透過 adminCommissionWorker 檢視任一員工）──
 let adminCommissionWorker = null; // admin 在業績頁選擇檢視的員工姓名；null = 員工本人模式
 
+// 有效費用金額：未支付的「抽成」以目前 金額×比例 即時計算（避免試算表存到舊值）；
+// 已支付或傭金（固定）則以存檔金額為準
+function effectiveFee(it) {
+  if (it['費用類型'] === '抽成' && it['費用支付狀態'] !== '已支付') {
+    const rate = (state.workerRates || {})[String(it['負責師傅'] || '').trim()] || 0;
+    if (rate) return Math.round(Number(it['金額'] || 0) * rate);
+  }
+  return Number(it['費用金額']) || 0;
+}
+
 function commissionFees() {
   if (adminCommissionWorker) {
     return state.items.filter(it => String(it['負責師傅'] || '').trim() === adminCommissionWorker);
@@ -2026,17 +2036,17 @@ function renderMyCommission() {
   const thisYear = new Date().getFullYear();
 
   const unfinished = commissionFees().filter(it => it['進度'] !== '完成');
-  const unfinishedTotal = unfinished.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  const unfinishedTotal = unfinished.reduce((s, it) => s + effectiveFee(it), 0);
 
   const { start: mStart, end: mEnd } = monthRange(0);
   const finishedThisMonth = commissionFees().filter(it => it['進度'] === '完成' && it['完工日期'] >= mStart && it['完工日期'] <= mEnd);
-  const finishedThisMonthTotal = finishedThisMonth.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  const finishedThisMonthTotal = finishedThisMonth.reduce((s, it) => s + effectiveFee(it), 0);
   const thisMonthTotal = unfinishedTotal + finishedThisMonthTotal;
 
   const { start: lStart, end: lEnd } = monthRange(-1);
   const lastMonthTotal = commissionFees()
     .filter(it => it['進度'] === '完成' && it['完工日期'] >= lStart && it['完工日期'] <= lEnd)
-    .reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+    .reduce((s, it) => s + effectiveFee(it), 0);
 
   const rank = getRankInfo(thisMonthTotal);
   const ringGoal = getRingGoal(thisMonthTotal);
@@ -2050,7 +2060,7 @@ function renderMyCommission() {
   const ringGradient = `conic-gradient(#f59e0b 0deg ${unfinishedDeg}deg, #fbbf24 ${unfinishedDeg}deg ${totalDeg}deg, #0f172a ${totalDeg}deg 360deg)`;
 
   const pending = commissionFees().filter(it => it['進度'] === '完成' && it['費用支付狀態'] === '未支付');
-  const pendingTotal = pending.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  const pendingTotal = pending.reduce((s, it) => s + effectiveFee(it), 0);
 
   return `
   <div class="xp-card">
@@ -2124,7 +2134,7 @@ function renderMyFeeRows(items, emptyMsg) {
     .map(it => `
     <div class="flex justify-between text-sm py-1 border-b border-gray-700">
       <span class="text-gray-300">${it['完工日期'] || ''} · ${it['客戶'] || ''} · ${it['品名'] || ''}</span>
-      <span class="text-amber-400 shrink-0 ml-2">${it['費用類型'] || ''} $${Number(it['費用金額'] || 0).toLocaleString()}</span>
+      <span class="text-amber-400 shrink-0 ml-2">${it['費用類型'] || ''} $${effectiveFee(it).toLocaleString()}</span>
     </div>`).join('');
 }
 
@@ -2287,7 +2297,7 @@ function renderStatsByWorker(from, to) {
 
 function renderWorkerFeePending() {
   const pending = state.items.filter(it =>
-    it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && Number(it['費用金額']) > 0
+    it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && effectiveFee(it) > 0
   );
   if (!pending.length) return '<p class="text-gray-500 text-sm mb-4">無待支付費用</p>';
   const byWorker = {};
@@ -2297,13 +2307,13 @@ function renderWorkerFeePending() {
     byWorker[w].push(it);
   });
   return Object.entries(byWorker).map(([name, items], idx) => {
-    const total = items.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+    const total = items.reduce((s, it) => s + effectiveFee(it), 0);
     const ids   = items.map(it => String(it['工作ID']));
     const detailId = `wfp_${idx}`;
     const rows = items.map(it => `
       <div class="flex justify-between text-sm py-1 border-b border-gray-700">
         <span class="text-gray-300">${it['完工日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
-        <span class="text-amber-400 shrink-0 ml-2">${it['費用類型']} $${Number(it['費用金額']).toLocaleString()}</span>
+        <span class="text-amber-400 shrink-0 ml-2">${it['費用類型']} $${effectiveFee(it).toLocaleString()}</span>
       </div>`).join('');
     const idsJson = JSON.stringify(ids).replace(/"/g, '&quot;');
     return `
@@ -2454,9 +2464,13 @@ async function confirmPayWorker(name, ids, btn) {
   btn.textContent = '支付中…';
   const today = new Date().toISOString().slice(0, 10);
   for (const id of ids) {
-    await api('update', '工作項目', { key: id, data: { '費用支付狀態': '已支付', '費用支付日期': today } });
     const it = state.items.find(x => String(x['工作ID']) === String(id));
-    if (it) { it['費用支付狀態'] = '已支付'; it['費用支付日期'] = today; }
+    // 付款時把有效金額（抽成即時重算）寫回試算表，確保帳面一致
+    const fee = it ? effectiveFee(it) : 0;
+    const data = { '費用支付狀態': '已支付', '費用支付日期': today };
+    if (fee > 0) data['費用金額'] = fee;
+    await api('update', '工作項目', { key: id, data });
+    if (it) { it['費用支付狀態'] = '已支付'; it['費用支付日期'] = today; if (fee > 0) it['費用金額'] = fee; }
   }
   saveCache();
   showToast(`已支付 ${name} 費用 ✓`);
