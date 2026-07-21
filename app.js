@@ -614,8 +614,9 @@ function renderCustomerDetail() {
         </div>
         <div class="flex flex-col items-end gap-2 ml-3 shrink-0">
           <span class="text-amber-400 font-bold">$${Number(it['金額'] || 0).toLocaleString()}</span>
-          <button onclick="editItem('${it['工作ID']}')" class="text-amber-400 text-sm">✎</button>
-          ${isAdmin() ? `<button onclick="deleteItem('${it['工作ID']}')" class="text-amber-400 text-sm">✕</button>` : ''}
+          <button onclick="editItem('${it['工作ID']}')" class="text-amber-400 text-sm" title="編輯">✎</button>
+          <button onclick="duplicateItem('${it['工作ID']}')" class="text-amber-400 text-sm" title="複製成多件">⧉</button>
+          ${isAdmin() ? `<button onclick="deleteItem('${it['工作ID']}')" class="text-amber-400 text-sm" title="刪除">✕</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -838,8 +839,7 @@ async function saveItem(id, btn) {
 
 async function deleteItem(id) {
   if (!document.getElementById('confirmDel_' + id)) {
-    const card = document.getElementById(`itemCard_${id}`);
-    const btn  = card ? card.querySelectorAll('button')[1] : null; // ✕ button
+    const btn = document.querySelector(`[onclick="deleteItem('${id}')"]`);
     if (btn) { btn.textContent = '確定？'; btn.id = 'confirmDel_' + id; }
     setTimeout(() => {
       const b = document.getElementById('confirmDel_' + id);
@@ -851,6 +851,88 @@ async function deleteItem(id) {
   showView('customerDetail', state.viewCustomer);
   saveCache();
   api('delete', '工作項目', { key: id });
+}
+
+// ── 複製工作項目（拆成多件各自可獨立追蹤進度）────
+function duplicateItem(id) {
+  const card = document.getElementById(`itemCard_${id}`);
+  if (!card || document.getElementById(`dupPanel_${id}`)) return;
+  const panel = document.createElement('div');
+  panel.id = `dupPanel_${id}`;
+  panel.className = 'mt-3 pt-3 border-t border-gray-600';
+  panel.dataset.n = '1';
+  panel.innerHTML = `
+    <div class="flex items-center justify-between gap-2">
+      <span class="text-xs text-gray-400">另外複製幾件獨立項目？</span>
+      <div class="flex items-center gap-2">
+        <button onclick="stepDup('${id}',-1)" class="btn btn-ghost text-sm px-3 py-1">−</button>
+        <span id="dupN_${id}" class="w-8 text-center font-bold text-amber-400">1</span>
+        <button onclick="stepDup('${id}',1)" class="btn btn-ghost text-sm px-3 py-1">＋</button>
+      </div>
+    </div>
+    <div class="text-xs text-gray-500 mt-1">複本會複製內容與費用設定，進度重設為待施工、清空完工/收款</div>
+    <div class="flex gap-2 mt-2">
+      <button onclick="closeDup('${id}')" class="btn btn-ghost text-sm flex-1">取消</button>
+      <button onclick="confirmDuplicate('${id}',this)" class="btn btn-primary text-sm flex-1">建立複本</button>
+    </div>`;
+  card.appendChild(panel);
+}
+
+function stepDup(id, delta) {
+  const panel = document.getElementById(`dupPanel_${id}`);
+  if (!panel) return;
+  let n = Math.max(1, Math.min(50, Number(panel.dataset.n || 1) + delta));
+  panel.dataset.n = String(n);
+  const label = document.getElementById(`dupN_${id}`);
+  if (label) label.textContent = n;
+}
+
+function closeDup(id) {
+  document.getElementById(`dupPanel_${id}`)?.remove();
+}
+
+async function confirmDuplicate(id, btn) {
+  if (btn && btn.disabled) return;
+  const src = state.items.find(x => String(x['工作ID']) === String(id));
+  if (!src) return;
+  const panel = document.getElementById(`dupPanel_${id}`);
+  const n = Math.max(1, Math.min(50, Number(panel?.dataset.n || 1)));
+
+  const base = Date.now();
+  const copies = Array.from({ length: n }, (_, i) => ({
+    '工作ID':       'W' + (base + i).toString(),
+    '訂單編號':     src['訂單編號'] || '',
+    '客戶':         src['客戶'] || '',
+    '開單日期':     new Date().toISOString().slice(0, 10),
+    '品名':         src['品名'] || '',
+    '規格':         src['規格'] || '',
+    '數量':         src['數量'] || 1,
+    '單價':         src['單價'] || 0,
+    '金額':         src['金額'] || 0,
+    '交貨期限':     src['交貨期限'] || '',
+    '進度':         '待施工',
+    '完工日期':     '',
+    '收款狀態':     '未收款',
+    '車號':         src['車號'] || '',
+    '負責師傅':     src['負責師傅'] || '',
+    '備註':         src['備註'] || '',
+    '完工照片':     '',
+    '參考圖片':     src['參考圖片'] || '',
+    '請款單狀態':   '',
+    '費用類型':     src['費用類型'] || '',
+    '費用金額':     src['費用類型'] ? (Number(src['費用金額']) || 0) : 0,
+    '費用支付狀態': src['費用類型'] ? '未支付' : '',
+    '費用支付日期': '',
+  }));
+
+  await withBtn(btn, async () => {
+    const r = await api('addBatch', '工作項目', { rows: copies });
+    if (r.error) { showToast('複製失敗：' + r.error, 'error'); return; }
+    state.items.push(...copies.map(normalizeItem));
+    saveCache();
+    showView('customerDetail', state.viewCustomer);
+    showToast(`已複製 ${n} 件 ✓`);
+  });
 }
 
 // ── 完工照片 ─────────────────────────────────
