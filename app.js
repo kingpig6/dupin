@@ -29,6 +29,7 @@ let state = {
   customers: [],
   workers: [],
   workerRates: {},      // { 姓名: 抽成比例 }，如 { '李安': 0.1 }
+  workerReturnRates: {},// { 姓名: 接單返還比例 }，如 { '李安': 0.2 }
   expenses: [],         // 支出記錄
   fixedTemplates: [],   // 固定支出模板
   settings: {},
@@ -141,6 +142,7 @@ function saveCache() {
       settings: state.settings,
       workers: state.workers,
       workerRates: state.workerRates,
+      workerReturnRates: state.workerReturnRates,
       expenses: state.expenses,
       fixedTemplates: state.fixedTemplates,
       ts: Date.now(),
@@ -157,9 +159,10 @@ function loadCache() {
     state.myFees      = cache.myFees      || [];
     state.customers   = cache.customers   || [];
     state.settings    = cache.settings    || {};
-    state.workers         = cache.workers         || [];
-    state.workerRates     = cache.workerRates     || {};
-    state.expenses        = cache.expenses        || [];
+    state.workers            = cache.workers            || [];
+    state.workerRates        = cache.workerRates        || {};
+    state.workerReturnRates  = cache.workerReturnRates  || {};
+    state.expenses           = cache.expenses           || [];
     state.fixedTemplates  = cache.fixedTemplates  || [];
     return true;
   } catch(e) { return false; }
@@ -190,7 +193,13 @@ async function loadAll() {
   if (w.data) {
     state.workers = w.data.map(r => r['姓名'] || '').filter(Boolean);
     state.workerRates = {};
-    w.data.forEach(r => { if (r['姓名']) state.workerRates[r['姓名']] = Number(r['抽成比例'] || 0); });
+    state.workerReturnRates = {};
+    w.data.forEach(r => {
+      if (r['姓名']) {
+        state.workerRates[r['姓名']]       = Number(r['抽成比例'] || 0);
+        state.workerReturnRates[r['姓名']] = Number(r['接單返還比例'] || 0);
+      }
+    });
   }
 
   if (auth.email && !isAdmin()) {
@@ -220,6 +229,7 @@ function normalizeItem(it) {
     請款單狀態:   it['請款單狀態']   || '',
     費用類型:     it['費用類型']     || '',
     費用金額:     Number(it['費用金額']) || 0,
+    返還金額:     Number(it['返還金額']) || 0,
     費用支付狀態: it['費用支付狀態'] || '',
     費用支付日期: formatDate(it['費用支付日期']),
     參考圖片:     it['參考圖片']     || '',
@@ -554,8 +564,13 @@ function renderCustomerDetail() {
     const color = progColor[prog] || 'bg-gray-600';
     const payColor = it['收款狀態'] === '已收款' ? 'bg-green-700' : 'bg-red-900';
     const showInvSel = section === 'done' && isAdmin();
+    const feeType = it['費用類型'] || '';
+    const feeCls  = feeType === '接單' ? ' card-referral' : (feeType === '傭金' ? ' card-fee-fixed' : (feeType === '抽成' ? ' card-fee-pct' : ''));
+    const feeChip = feeType
+      ? `<span class="text-xs px-1.5 py-0.5 rounded ${feeType==='接單'?'bg-teal-800 text-teal-200':(feeType==='傭金'?'bg-indigo-900 text-indigo-200':'bg-amber-900 text-amber-200')}">${feeType}</span>`
+      : '';
     return `
-    <div class="card" id="itemCard_${it['工作ID']}">
+    <div class="card${feeCls}" id="itemCard_${it['工作ID']}">
       <div class="flex justify-between items-start">
         ${showInvSel ? `
         <label class="shrink-0 mr-3 mt-1" onclick="event.stopPropagation()">
@@ -567,7 +582,7 @@ function renderCustomerDetail() {
         </label>` : ''}
         <div class="flex-1 min-w-0">
           ${worker ? `<div class="text-xs text-amber-400 font-semibold">${it['客戶'] || ''}</div>` : ''}
-          <div class="font-semibold">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
+          <div class="font-semibold flex items-center gap-1.5">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}${feeChip}</div>
           <div class="text-xs text-gray-400 mb-1">
             ${it['數量']} × $${Number(it['單價']).toLocaleString()}
             ${it['車號'] ? ' · ' + it['車號'] : ''}
@@ -751,6 +766,7 @@ function editItem(id) {
         <option value="" ${!it['費用類型']?'selected':''}>無費用</option>
         <option value="傭金" ${it['費用類型']==='傭金'?'selected':''}>傭金（固定）</option>
         <option value="抽成" ${it['費用類型']==='抽成'?'selected':''}>抽成（比例）</option>
+        <option value="接單" ${it['費用類型']==='接單'?'selected':''}>接單（返還公司）</option>
       </select>
       <input id="ei_fee_amt" type="number" placeholder="費用金額" value="${Number(it['費用金額'])||''}"/>
     </div>
@@ -799,7 +815,7 @@ function editItem(id) {
       生產工單 ${batchNo}（${batchIds.length} 件）
     </button>` : ''}`;
   // 抽成類型：以目前 數量×單價 重算費用（修正舊資料只按單價算的金額）
-  if (it['費用類型'] === '抽成') onEditFeeTypeChange();
+  if (it['費用類型'] === '抽成' || it['費用類型'] === '接單') onEditFeeTypeChange();
 }
 
 async function saveItem(id, btn) {
@@ -820,6 +836,11 @@ async function saveItem(id, btn) {
     '負責師傅': document.getElementById('ei_worker').value.trim(),
     '費用類型': document.getElementById('ei_fee_type').value,
     '費用金額': Number(document.getElementById('ei_fee_amt').value) || 0,
+    '返還金額': (() => {
+      if (document.getElementById('ei_fee_type').value !== '接單') return 0;
+      const w = document.getElementById('ei_worker').value.trim();
+      return Math.round(qty * price * returnRateOf(w));
+    })(),
     '費用支付狀態': (() => {
       const newType = document.getElementById('ei_fee_type').value;
       if (!newType) return '';
@@ -921,6 +942,7 @@ async function confirmDuplicate(id, btn) {
     '請款單狀態':   '',
     '費用類型':     src['費用類型'] || '',
     '費用金額':     src['費用類型'] ? (Number(src['費用金額']) || 0) : 0,
+    '返還金額':     src['費用類型'] === '接單' ? (Number(src['返還金額']) || 0) : 0,
     '費用支付狀態': src['費用類型'] ? '未支付' : '',
     '費用支付日期': '',
   }));
@@ -1275,6 +1297,7 @@ function renderItemRow(idx) {
         <option value="">無費用</option>
         <option value="傭金">傭金（固定）</option>
         <option value="抽成">抽成（比例）</option>
+        <option value="接單">接單（返還公司）</option>
       </select>
       <input id="r${idx}_fee_amt" type="number" placeholder="費用金額"/>
     </div>
@@ -1326,14 +1349,24 @@ function onFeeTypeChange(idx) {
   const infoEl    = document.getElementById(`r${idx}_fee_info`);
   if (!feeTypeEl) return;
   const feeType = feeTypeEl.value;
-  if (feeType === '抽成') {
+  if (feeType === '抽成' || feeType === '接單') {
     const worker = document.getElementById(`r${idx}_worker`)?.value || '';
-    const rate   = (state.workerRates || {})[worker] || 0;
+    const rate   = feeRateOf(worker);
     const qty    = Number(document.getElementById(`r${idx}_qty`)?.value)   || 0;
     const price  = Number(document.getElementById(`r${idx}_price`)?.value) || 0;
     const fee    = Math.round(qty * price * rate);
     if (feeAmtEl) feeAmtEl.value = fee;
-    if (infoEl)   infoEl.textContent = rate ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}` : '（此師傅尚未設定抽成比例）';
+    if (infoEl) {
+      if (feeType === '接單') {
+        const rr  = returnRateOf(worker);
+        const ret = Math.round(qty * price * rr);
+        infoEl.textContent = rate
+          ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}，返還公司 ${(rr*100).toFixed(0)}% = $${ret.toLocaleString()}，員工實得 $${(fee-ret).toLocaleString()}`
+          : '（此師傅尚未設定抽成比例）';
+      } else {
+        infoEl.textContent = rate ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}` : '（此師傅尚未設定抽成比例）';
+      }
+    }
   } else {
     if (infoEl) infoEl.textContent = '';
   }
@@ -1415,6 +1448,12 @@ async function saveNewItems(btn) {
       '負責師傅': document.getElementById(`r${idx}_worker`)?.value.trim()   || '',
       '費用類型':     document.getElementById(`r${idx}_fee_type`)?.value        || '',
       '費用金額':     Number(document.getElementById(`r${idx}_fee_amt`)?.value) || 0,
+      '返還金額':     (() => {
+        const ft = document.getElementById(`r${idx}_fee_type`)?.value;
+        if (ft !== '接單') return 0;
+        const w = document.getElementById(`r${idx}_worker`)?.value || '';
+        return Math.round(qty * price * returnRateOf(w));
+      })(),
       '費用支付狀態': document.getElementById(`r${idx}_fee_type`)?.value ? '未支付' : '',
       '費用支付日期': '',
       '備註':         document.getElementById(`r${idx}_note`)?.value.trim()     || '',
@@ -1759,15 +1798,23 @@ function onEditFeeTypeChange() {
   const feeType = document.getElementById('ei_fee_type')?.value;
   const infoEl  = document.getElementById('ei_fee_info');
   const feeAmtEl = document.getElementById('ei_fee_amt');
-  if (!feeType || !infoEl) return;
-  if (feeType === '抽成') {
+  if (!infoEl) return;
+  if (feeType === '抽成' || feeType === '接單') {
     const worker = document.getElementById('ei_worker')?.value || '';
-    const rate   = (state.workerRates || {})[worker] || 0;
+    const rate   = feeRateOf(worker);
     const qty    = Number(document.getElementById('ei_qty')?.value)   || 1;
     const price  = Number(document.getElementById('ei_price')?.value) || 0;
     const fee    = Math.round(qty * price * rate);
     if (feeAmtEl) feeAmtEl.value = fee;
-    infoEl.textContent = rate ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}` : '（此師傅尚未設定抽成比例）';
+    if (feeType === '接單') {
+      const rr  = returnRateOf(worker);
+      const ret = Math.round(qty * price * rr);
+      infoEl.textContent = rate
+        ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}，返還公司 ${(rr*100).toFixed(0)}% = $${ret.toLocaleString()}，員工實得 $${(fee-ret).toLocaleString()}`
+        : '（此師傅尚未設定抽成比例）';
+    } else {
+      infoEl.textContent = rate ? `抽成 ${(rate*100).toFixed(0)}% = $${fee.toLocaleString()}` : '（此師傅尚未設定抽成比例）';
+    }
   } else {
     infoEl.textContent = '';
   }
@@ -2097,15 +2144,44 @@ function startCommissionAnimations() {
 // ── 我的傭金（員工專用；管理員可透過 adminCommissionWorker 檢視任一員工）──
 let adminCommissionWorker = null; // admin 在業績頁選擇檢視的員工姓名；null = 員工本人模式
 
-// 有效費用金額：未支付的「抽成」以目前 金額×比例 即時計算（避免試算表存到舊值）；
-// 已支付或傭金（固定）則以存檔金額為準
-function effectiveFee(it) {
-  if (it['費用類型'] === '抽成' && it['費用支付狀態'] !== '已支付') {
-    const rate = (state.workerRates || {})[String(it['負責師傅'] || '').trim()] || 0;
+// ── 費用計算 ─────────────────────────────────
+// 費用類型：傭金(固定) / 抽成(金額×比例) / 接單(抽成，但需返還公司)
+function feeRateOf(name)    { return (state.workerRates || {})[String(name || '').trim()] || 0; }
+function returnRateOf(name) { return (state.workerReturnRates || {})[String(name || '').trim()] || 0; }
+
+// 抽成基準金額：未支付的抽成/接單以目前 金額×抽成比例 即時計算；已支付或傭金用存檔值
+function commissionAmt(it) {
+  if ((it['費用類型'] === '抽成' || it['費用類型'] === '接單') && it['費用支付狀態'] !== '已支付') {
+    const rate = feeRateOf(it['負責師傅']);
     if (rate) return Math.round(Number(it['金額'] || 0) * rate);
   }
   return Number(it['費用金額']) || 0;
 }
+
+// 接單返還公司金額：未支付即時算(金額×返還比例)，已支付用存檔
+function returnAmt(it) {
+  if (it['費用類型'] !== '接單') return 0;
+  if (it['費用支付狀態'] !== '已支付') {
+    const rr = returnRateOf(it['負責師傅']);
+    if (rr) return Math.round(Number(it['金額'] || 0) * rr);
+  }
+  return Number(it['返還金額']) || 0;
+}
+
+// 員工收入（傭金頁 / 等級）：接單 = 抽成 − 返還；其餘 = 抽成/傭金
+function workerIncome(it) {
+  if (it['費用類型'] === '接單') return commissionAmt(it) - returnAmt(it);
+  return commissionAmt(it);
+}
+
+// 老闆應付（人員費用 / 損益，可為負）：接單 = −返還(收回)；其餘 = 抽成/傭金
+function bossPayable(it) {
+  if (it['費用類型'] === '接單') return -returnAmt(it);
+  return commissionAmt(it);
+}
+
+// 相容舊呼叫
+function effectiveFee(it) { return workerIncome(it); }
 
 function commissionFees() {
   if (adminCommissionWorker) {
@@ -2237,7 +2313,7 @@ function queryMyCommission() {
     const d = it['費用支付日期'] || '';
     return it['費用支付狀態'] === '已支付' && (!from || (d >= from && d <= to));
   });
-  const total = paid.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  const total = paid.reduce((s, it) => s + workerIncome(it), 0);
   document.getElementById('myCommissionPaid').innerHTML = `
     <div class="card mb-2">
       <div class="flex justify-between items-center mb-2">
@@ -2379,7 +2455,7 @@ function renderStatsByWorker(from, to) {
 
 function renderWorkerFeePending() {
   const pending = state.items.filter(it =>
-    it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && effectiveFee(it) > 0
+    it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && it['費用類型'] && bossPayable(it) !== 0
   );
   if (!pending.length) return '<p class="text-gray-500 text-sm mb-4">無待支付費用</p>';
   const byWorker = {};
@@ -2389,29 +2465,35 @@ function renderWorkerFeePending() {
     byWorker[w].push(it);
   });
   return Object.entries(byWorker).map(([name, items], idx) => {
-    const total = items.reduce((s, it) => s + effectiveFee(it), 0);
+    const total = items.reduce((s, it) => s + bossPayable(it), 0);
     const ids   = items.map(it => String(it['工作ID']));
     const detailId = `wfp_${idx}`;
-    const rows = items.map(it => `
+    const rows = items.map(it => {
+      const amt = bossPayable(it);
+      const label = it['費用類型'] === '接單' ? `接單返還 −$${returnAmt(it).toLocaleString()}` : `${it['費用類型']} $${amt.toLocaleString()}`;
+      return `
       <div class="flex justify-between text-sm py-1 border-b border-gray-700">
         <span class="text-gray-300">${it['完工日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
-        <span class="text-amber-400 shrink-0 ml-2">${it['費用類型']} $${effectiveFee(it).toLocaleString()}</span>
-      </div>`).join('');
+        <span class="${amt < 0 ? 'text-emerald-400' : 'text-amber-400'} shrink-0 ml-2">${label}</span>
+      </div>`;
+    }).join('');
     const idsJson = JSON.stringify(ids).replace(/"/g, '&quot;');
+    const totalLabel = total < 0 ? `收回 $${Math.abs(total).toLocaleString()}` : `$${total.toLocaleString()}`;
+    const btnLabel = total < 0 ? '結算（員工返還）' : '支付全部';
     return `
     <div class="card mb-2">
       <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
         <div>
           <div class="font-semibold">${name}</div>
-          <div class="text-xs text-gray-400">${items.length} 件待支付</div>
+          <div class="text-xs text-gray-400">${items.length} 件待結算</div>
         </div>
-        <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
+        <span class="${total < 0 ? 'text-emerald-400' : 'text-amber-400'} font-bold">${totalLabel}</span>
       </div>
       <div id="${detailId}" class="hidden mt-2">
         ${rows}
         <button class="btn btn-primary w-full mt-3"
           onclick="confirmPayWorker('${name}', JSON.parse(this.dataset.ids), this)"
-          data-ids="${idsJson}">支付全部</button>
+          data-ids="${idsJson}">${btnLabel}</button>
       </div>
     </div>`;
   }).join('');
@@ -2430,13 +2512,17 @@ function renderWorkerFeePaid(from, to) {
     byWorker[w].push(it);
   });
   return Object.entries(byWorker).map(([name, items], idx) => {
-    const total = items.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+    const total = items.reduce((s, it) => s + bossPayable(it), 0);
     const detailId = `wfpaid_${idx}`;
-    const rows = items.map(it => `
+    const rows = items.map(it => {
+      const amt = bossPayable(it);
+      const label = it['費用類型'] === '接單' ? `接單返還 −$${returnAmt(it).toLocaleString()}` : `$${amt.toLocaleString()}`;
+      return `
       <div class="flex justify-between text-sm py-1 border-b border-gray-700">
         <span class="text-gray-300">${it['費用支付日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
-        <span class="text-amber-400 shrink-0 ml-2">$${Number(it['費用金額']).toLocaleString()}</span>
-      </div>`).join('');
+        <span class="${amt < 0 ? 'text-emerald-400' : 'text-amber-400'} shrink-0 ml-2">${label}</span>
+      </div>`;
+    }).join('');
     return `
     <div class="card mb-2">
       <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
@@ -2458,11 +2544,11 @@ function renderProfitReport(from, to) {
   ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const revenue = incomeItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
 
-  // ── 人員費用：已支付 ──
+  // ── 人員費用：已支付（接單返還為負，代表公司收回）──
   const feeItems = state.items.filter(it =>
     it['費用支付狀態'] === '已支付' && it['費用支付日期'] >= from && it['費用支付日期'] <= to
   ).sort((a, b) => (a['費用支付日期'] > b['費用支付日期'] ? -1 : 1));
-  const totalFees = feeItems.reduce((s, it) => s + Number(it['費用金額'] || 0), 0);
+  const totalFees = feeItems.reduce((s, it) => s + bossPayable(it), 0);
 
   // ── 公司支出 ──
   const expItems = (state.expenses || []).filter(e => {
@@ -2482,11 +2568,15 @@ function renderProfitReport(from, to) {
       <span class="text-amber-400 shrink-0 ml-2">$${Number(it['金額']||0).toLocaleString()}</span>
     </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無完工收入</p>';
 
-  const feeRows = feeItems.map(it => `
+  const feeRows = feeItems.map(it => {
+    const amt = bossPayable(it);
+    const isReturn = it['費用類型'] === '接單';
+    return `
     <div class="flex justify-between text-sm py-1 border-b border-gray-700">
-      <span class="text-gray-300">${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}</span>
-      <span class="text-red-400 shrink-0 ml-2">$${Number(it['費用金額']||0).toLocaleString()}</span>
-    </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無已支付人員費用</p>';
+      <span class="text-gray-300">${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}${isReturn ? '（接單返還）' : ''}</span>
+      <span class="${amt < 0 ? 'text-emerald-400' : 'text-red-400'} shrink-0 ml-2">${amt < 0 ? '+$' + Math.abs(amt).toLocaleString() : '$' + amt.toLocaleString()}</span>
+    </div>`;
+  }).join('') || '<p class="text-xs text-gray-500 py-1">無已支付人員費用</p>';
 
   const expRows = expItems.map(e => `
     <div class="flex justify-between items-center text-sm py-1 border-b border-gray-700 gap-2">
@@ -2529,14 +2619,15 @@ function renderProfitReport(from, to) {
 
 async function confirmPayWorker(name, ids, btn) {
   if (btn.dataset.confirmed !== '1') {
+    if (!btn.dataset.orig) btn.dataset.orig = btn.textContent;
     btn.dataset.confirmed = '1';
-    btn.textContent = '確定支付？再按一次';
+    btn.textContent = '確定？再按一次';
     btn.classList.remove('bg-blue-600');
     btn.classList.add('bg-amber-600');
     setTimeout(() => {
       if (btn.dataset.confirmed === '1') {
         btn.dataset.confirmed = '';
-        btn.textContent = '支付全部';
+        btn.textContent = btn.dataset.orig || '支付全部';
         btn.classList.remove('bg-amber-600');
       }
     }, 3000);
@@ -2547,12 +2638,19 @@ async function confirmPayWorker(name, ids, btn) {
   const today = new Date().toISOString().slice(0, 10);
   for (const id of ids) {
     const it = state.items.find(x => String(x['工作ID']) === String(id));
-    // 付款時把有效金額（抽成即時重算）寫回試算表，確保帳面一致
-    const fee = it ? effectiveFee(it) : 0;
+    // 結算時把即時算出的抽成/返還金額寫回試算表，確保帳面一致
     const data = { '費用支付狀態': '已支付', '費用支付日期': today };
-    if (fee > 0) data['費用金額'] = fee;
+    if (it) {
+      const c = commissionAmt(it);
+      if (c > 0) data['費用金額'] = c;
+      if (it['費用類型'] === '接單') data['返還金額'] = returnAmt(it);
+    }
     await api('update', '工作項目', { key: id, data });
-    if (it) { it['費用支付狀態'] = '已支付'; it['費用支付日期'] = today; if (fee > 0) it['費用金額'] = fee; }
+    if (it) {
+      it['費用支付狀態'] = '已支付'; it['費用支付日期'] = today;
+      if (data['費用金額'] != null) it['費用金額'] = data['費用金額'];
+      if (data['返還金額'] != null) it['返還金額'] = data['返還金額'];
+    }
   }
   saveCache();
   showToast(`已支付 ${name} 費用 ✓`);
