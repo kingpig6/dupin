@@ -286,8 +286,13 @@ function render() {
       title.textContent = '獨品工坊';
       back.classList.add('hidden');
       actions.innerHTML = GOOGLE_CLIENT_ID && auth.email
-        ? `<button onclick="logout()" class="text-gray-400 text-xs flex items-center gap-1">
-             <span class="text-amber-400">${auth.name || auth.email}</span>登出</button>`
+        ? `<div class="flex items-center gap-2 text-xs">
+             <span class="text-amber-400">${auth.name || auth.email}</span>
+             ${auth.sessionToken
+               ? `<span class="flex items-center gap-1 text-green-400" title="長效登入，30 天免重登">🟢 已登入</span>`
+               : `<span class="flex items-center gap-1 text-yellow-400" title="一般登入，可能較快到期">🟡 一般</span>`}
+             <button onclick="logout()" class="text-gray-400">登出</button>
+           </div>`
         : '';
       app.innerHTML = renderOrders();
       break;
