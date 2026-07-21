@@ -32,6 +32,10 @@
   .btn-danger  { background:#dc2626; color:#fff; }
   .btn-ghost   { background:#374151; color:#f3f4f6; }
   .card { background:#1f2937; border-radius:12px; padding:16px; margin-bottom:12px; }
+  /* 費用類型卡片底色區分 */
+  .card-referral  { background:#0f2e2a; border:1px solid #0d9488; }   /* 接單（返還公司）*/
+  .card-fee-fixed { background:#1e2244; border:1px solid #4f46e5; }   /* 傭金（固定）*/
+  .card-fee-pct   { background:#2a2410; border:1px solid #b45309; }   /* 抽成（比例）*/
   .section-title { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
   @media print {
     body { background:#fff; color:#000; }
@@ -140,6 +144,6 @@
 <!-- ===== 請款單列印區 ===== -->
 <div class="print-area" id="invoicePrint"></div>
 
-<script src="app.js?v=51"></script>
+<script src="app.js?v=52"></script>
 </body>
 </html>
