@@ -54,18 +54,32 @@ function handleRequest(e) {
       return ContentService.createTextOutput(JSON.stringify({ error: 'Unauthorized' })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // ── 身分驗證（Google 登入）──────────────────
-    // 若已設定 GOOGLE_CLIENT_ID 則啟用權限控管；未設定則維持舊行為
+    // ── 身分驗證 ──────────────────────────────
+    // 優先用「自家 session token」（長效，30 天）；沒有再退回 Google ID Token
     const clientId = PropertiesService.getScriptProperties().getProperty('GOOGLE_CLIENT_ID');
     let user = null;
-    if (body.idToken) user = verifyIdToken(body.idToken);
-    const roleInfo = user ? getUserRole(user.email) : null;
+    let roleInfo = null;
+    let newSession = null;
 
-    // 登入驗證專用 action：回傳角色
+    const sess = verifySession(body.sessionToken);
+    if (sess) {
+      roleInfo = getUserRole(sess.email);              // 每次仍即時查員工表（可即時擋人）
+      if (roleInfo) {
+        user = { email: sess.email, name: roleInfo.name || sess.name };
+        if (sessionNearExpiry(sess)) newSession = signSession(sess.email, roleInfo.name || sess.name, roleInfo.role);
+      }
+    } else if (body.idToken) {
+      const g = verifyIdToken(body.idToken);
+      if (g) { roleInfo = getUserRole(g.email); if (roleInfo) user = { email: g.email, name: roleInfo.name || g.name }; }
+    }
+
+    // 登入驗證專用 action：驗 Google → 簽發自家長效 session
     if (action === 'verifyLogin') {
-      if (!user) return jsonOut({ error: 'TOKEN_INVALID', debug: debugTokenInfo(body.idToken) });
-      if (!roleInfo) return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
-      return jsonOut({ success: true, email: user.email, name: roleInfo.name || user.name, role: roleInfo.role });
+      const g = verifyIdToken(body.idToken);
+      if (!g) return jsonOut({ error: 'TOKEN_INVALID', debug: debugTokenInfo(body.idToken) });
+      const r = getUserRole(g.email);
+      if (!r) return jsonOut({ error: 'NOT_ALLOWED', email: g.email });
+      return jsonOut({ success: true, email: g.email, name: r.name || g.name, role: r.role, session: signSession(g.email, r.name || g.name, r.role) });
     }
 
     // 啟用權限控管後：所有寫入/敏感操作需要有效登入與足夠權限
@@ -110,6 +124,9 @@ function handleRequest(e) {
       default:                result = { error: 'Unknown action: ' + action };
     }
 
+    // 若 session 快到期，順手把新的長效 token 夾帶回前端（無感續期）
+    if (newSession && result && typeof result === 'object') result._session = newSession;
+
     return ContentService
       .createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
@@ -122,6 +139,44 @@ function handleRequest(e) {
 
 function jsonOut(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ── 自家長效登入 token（A2）──────────────────
+// 需在 Script Properties 設定 SESSION_SECRET（一串隨機字）。未設定則自動退回舊的 Google token 模式。
+var SESSION_DAYS = 30;                              // 效期 30 天
+var SESSION_RENEW_WITHIN_MS = 7 * 24 * 3600 * 1000; // 剩 7 天內自動續發
+
+function _sessionSecret() {
+  return PropertiesService.getScriptProperties().getProperty('SESSION_SECRET') || '';
+}
+function _b64url(bytes) {
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+}
+// 簽發：payload(base64url).簽章(base64url)
+function signSession(email, name, role) {
+  var secret = _sessionSecret();
+  if (!secret) return '';
+  var exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 24 * 3600;
+  var payload = _b64url(Utilities.newBlob(JSON.stringify({ email: email, name: name, role: role, exp: exp })).getBytes());
+  var sig = _b64url(Utilities.computeHmacSha256Signature(payload, secret));
+  return payload + '.' + sig;
+}
+// 驗證：簽章正確且未過期才回傳 { email, name, role, exp }
+function verifySession(token) {
+  try {
+    var secret = _sessionSecret();
+    if (!secret || !token) return null;
+    var parts = String(token).split('.');
+    if (parts.length !== 2) return null;
+    var expected = _b64url(Utilities.computeHmacSha256Signature(parts[0], secret));
+    if (expected !== parts[1]) return null;
+    var obj = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString());
+    if (!obj.exp || obj.exp * 1000 < Date.now()) return null;
+    return obj;
+  } catch (e) { return null; }
+}
+function sessionNearExpiry(sess) {
+  return sess && sess.exp && (sess.exp * 1000 - Date.now() < SESSION_RENEW_WITHIN_MS);
 }
 
 // ── 除錯用：本地解碼 JWT 並回傳比對結果（上線後可移除）──

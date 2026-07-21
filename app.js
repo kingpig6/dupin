@@ -9,7 +9,8 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbyeGdSEt24vgZtZzrG36oA4
 const GOOGLE_CLIENT_ID = '1037907135545-vtb7eaqjbc5765ev01pgf76h4o4jjl32.apps.googleusercontent.com';
 
 // 登入後的使用者資訊
-let auth = { idToken: null, email: null, name: null, role: null };
+// sessionToken：自家長效通行證（A2，30 天）；idToken：Google 憑證（僅初次登入/重登用）
+let auth = { idToken: null, sessionToken: null, email: null, name: null, role: null };
 // 是否為管理員（未啟用登入時所有人視為管理員，維持舊行為）
 function isAdmin() { return !GOOGLE_CLIENT_ID || auth.role === 'admin'; }
 
@@ -61,30 +62,36 @@ function isAuthError(data) {
   return !!(data && (data.error === 'LOGIN_REQUIRED' || data.error === 'TOKEN_INVALID'));
 }
 
+// 後端若夾帶新的長效 session（快到期自動續發），存起來
+function captureSession(data) {
+  if (data && data._session) {
+    auth.sessionToken = data._session;
+    localStorage.setItem('dupin_session', data._session);
+  }
+}
+
 async function api(action, sheet, extra = {}) {
   const payload = { action, sheet, secret: API_SECRET, ...extra };
-  if (auth.idToken) payload.idToken = auth.idToken;
+  if (auth.sessionToken) payload.sessionToken = auth.sessionToken;
+  if (auth.idToken)      payload.idToken = auth.idToken;
   try {
     let data = await postApi(payload);
+    captureSession(data);
 
-    // token 過期／尚未就緒：多試幾次靜默刷新，避免 Google 端偶發失敗就直接判定登入失效
+    // 只有在「沒有長效 session」的過渡狀態才退回 Google 靜默刷新重試
     let attempts = 0;
-    while (isAuthError(data) && attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
+    while (isAuthError(data) && !auth.sessionToken && attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
       attempts++;
       const refreshed = await silentTokenRefresh();
-      if (refreshed) {
-        payload.idToken = auth.idToken;
-        data = await postApi(payload);
-      } else if (attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
-        await sleep(TOKEN_REFRESH_RETRY_DELAY_MS);
-      }
+      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload); captureSession(data); }
+      else if (attempts < TOKEN_REFRESH_MAX_ATTEMPTS) await sleep(TOKEN_REFRESH_RETRY_DELAY_MS);
     }
 
     if (isAuthError(data)) {
-      // 重試多次仍失敗：不清空本機身分／快取，讓使用者可以繼續看快取資料，
-      // 只提示這次操作沒完成，需要的話再手動重試或重新整理
-      auth.idToken = null;
-      showToast('操作未完成，登入可能暫時中斷，請稍後再試一次', 'error');
+      // session 失效或未登入：清掉憑證並請使用者重新登入（30 天內通常不會走到這）
+      auth.idToken = null; auth.sessionToken = null;
+      localStorage.removeItem('dupin_session');
+      if (GOOGLE_CLIENT_ID) showLoginGate('登入已過期，請重新登入');
     } else if (data && data.error === 'FORBIDDEN') {
       showToast('權限不足，此操作僅限管理員', 'error');
     }
@@ -2843,14 +2850,22 @@ function showLoginGate(msg, retries) {
 
 async function handleCredentialResponse(response) {
   auth.idToken = response.credential;
-  // 若是靜默刷新（背景 token 更新），通知等待中的 promise 即可，不重新登入
+  // 若是靜默刷新（舊制背景 token 更新），通知等待中的 promise 即可，不重新登入
   if (_silentRefreshResolve) { scheduleTokenRefresh(); _silentRefreshResolve(); return; }
   const r = await api('verifyLogin', null, {});
   if (r && r.success) {
     auth.email = r.email; auth.name = r.name; auth.role = r.role;
     localStorage.setItem('dupin_auth', JSON.stringify({ email: auth.email, name: auth.name, role: auth.role }));
+    if (r.session) {
+      // A2：拿到自家長效通行證，之後不再依賴 Google（1 小時到期）
+      auth.sessionToken = r.session;
+      localStorage.setItem('dupin_session', r.session);
+      auth.idToken = null;
+    } else {
+      // 過渡：後端尚未設定 SESSION_SECRET，退回舊制的背景刷新
+      scheduleTokenRefresh();
+    }
     document.querySelector('nav.no-print')?.classList.remove('hidden');
-    scheduleTokenRefresh();
     loadAll();
   } else {
     auth = { idToken: null, email: null, name: null, role: null };
@@ -2862,8 +2877,9 @@ async function handleCredentialResponse(response) {
 }
 
 function logout(msg) {
-  auth = { idToken: null, email: null, name: null, role: null };
+  auth = { idToken: null, sessionToken: null, email: null, name: null, role: null };
   localStorage.removeItem('dupin_auth');
+  localStorage.removeItem('dupin_session');
   if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
   showLoginGate(msg);
 }
@@ -2884,10 +2900,16 @@ if (API_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
       auth.email = s.email; auth.name = s.name; auth.role = s.role;
     } catch (e) {}
   }
-  if (auth.email) {
-    // 有記住的身分，先直接進入（Google One Tap 在背景靜默取得新 token）
+  const savedSession = localStorage.getItem('dupin_session');
+  if (savedSession) auth.sessionToken = savedSession;
+
+  if (auth.sessionToken && auth.email) {
+    // A2：有長效通行證，直接進入，完全不需要 Google（不會被 1 小時/FedCM 卡住）
+    document.querySelector('nav.no-print')?.classList.remove('hidden');
     loadAll();
-    // 背景靜默登入，更新 idToken 供後續寫入操作使用
+  } else if (auth.email) {
+    // 過渡（尚未換發 session）：沿用舊制的 Google 背景靜默登入
+    loadAll();
     window.addEventListener('load', () => {
       if (window.google && google.accounts) {
         if (!window._gsiInitialized) {
