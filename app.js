@@ -2465,6 +2465,8 @@ function renderMealsBody(from, to) {
           <input id="meal_content" placeholder="店家/內容（選填）"/>
         </div>
         <input id="meal_note" placeholder="備註（選填）"/>
+        <button type="button" id="mealVoiceBtn" onclick="startMealVoice()" class="w-full py-2 rounded-lg font-bold text-white bg-blue-600 active:bg-blue-800">🎤 語音登記（說「小傑100 又嘉99」）</button>
+        <div id="mealVoiceResult" class="text-xs text-amber-300 min-h-4"></div>
         <div class="section-title mt-1 mb-0">用餐人與金額（可多人，各自金額）</div>
         <div id="mealPeopleRows">${mealPersonRow(0)}</div>
         <button type="button" class="text-amber-400 text-sm font-bold text-left" onclick="addMealPersonRow()">＋ 加一人</button>
@@ -2506,6 +2508,67 @@ function addMealPersonRow() {
   const div = document.createElement('div');
   div.innerHTML = mealPersonRow(mealRowSeq);
   c.appendChild(div.firstElementChild);
+}
+
+// ── 餐飲語音登記（本地辨識，說「小傑100 又嘉99」自動填人+金額）──
+let mealVoiceRec = null, mealVoiceActive = false;
+function mealVoiceReset() {
+  mealVoiceActive = false;
+  const btn = document.getElementById('mealVoiceBtn');
+  if (btn) { btn.textContent = '🎤 語音登記（說「小傑100 又嘉99」）'; btn.classList.remove('bg-amber-600'); btn.classList.add('bg-blue-600'); }
+}
+function startMealVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showToast('此瀏覽器不支援語音，請用 Android Chrome'); return; }
+  if (mealVoiceActive) { mealVoiceRec && mealVoiceRec.stop(); return; }
+  mealVoiceRec = new SR();
+  mealVoiceRec.lang = 'zh-TW'; mealVoiceRec.interimResults = true; mealVoiceRec.continuous = true;
+  const btn = document.getElementById('mealVoiceBtn');
+  const res = document.getElementById('mealVoiceResult');
+  mealVoiceActive = true;
+  if (btn) { btn.textContent = '🔴 聆聽中…說完點停止'; btn.classList.replace('bg-blue-600','bg-amber-600'); }
+  let full = '', silence = null;
+  mealVoiceRec.onresult = e => {
+    full = Array.from(e.results).map(r => r[0].transcript).join('');
+    if (res) res.textContent = '辨識：' + full;
+    clearTimeout(silence); silence = setTimeout(() => mealVoiceRec.stop(), 3000);
+  };
+  mealVoiceRec.onend = () => { clearTimeout(silence); mealVoiceReset(); if (full) parseMealVoice(full); };
+  mealVoiceRec.onerror = e => { clearTimeout(silence); if (e.error !== 'no-speech') showToast('語音錯誤：' + e.error); mealVoiceReset(); };
+  mealVoiceRec.start();
+}
+function mealZhNum(s) {
+  if (/^[\d,]+$/.test(s)) return parseInt(s.replace(/,/g, ''));
+  const map = { 零:0,一:1,二:2,兩:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,百:100,千:1000 };
+  let result = 0, tmp = 0;
+  for (const c of s) { const v = map[c]; if (v == null) continue; if (v >= 10) { result += (tmp||1)*v; tmp = 0; } else tmp = v; }
+  return result + tmp;
+}
+function parseMealVoice(text) {
+  const names = (state.workers || []).slice().sort((a, b) => b.length - a.length);
+  const found = [];
+  const used = new Set();
+  names.forEach(n => {
+    if (used.has(n)) return;
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = text.match(new RegExp(esc + '\\s*[:：]?\\s*([\\d,]+|[零一二兩三四五六七八九十百千]+)'));
+    if (m) { const amt = mealZhNum(m[1]); if (amt) { found.push({ name: n, amt }); used.add(n); } }
+  });
+  if (!found.length) { showToast('沒聽出用餐人與金額，請手動填'); return; }
+  const c = document.getElementById('mealPeopleRows');
+  if (!c) return;
+  c.innerHTML = ''; mealRowSeq = 0;
+  found.forEach((f, i) => {
+    const div = document.createElement('div');
+    div.innerHTML = mealPersonRow(i);
+    c.appendChild(div.firstElementChild);
+    document.getElementById(`mealP_name_${i}`).value = f.name;
+    document.getElementById(`mealP_amt_${i}`).value = f.amt;
+    mealRowSeq = i;
+  });
+  const res = document.getElementById('mealVoiceResult');
+  if (res) res.textContent = `✓ 已填入 ${found.length} 人，請確認金額後送出`;
+  showToast(`語音填入 ${found.length} 人 ✓`);
 }
 
 async function saveMeals(btn) {
