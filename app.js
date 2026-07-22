@@ -1912,6 +1912,30 @@ async function deleteFixedTemplate(id, idx, btn) {
   showToast('已刪除 ✓');
 }
 
+// 立即把本月啟用中的固定支出寫進支出記錄（不用等每月 1 號觸發器）；已寫入的不重複
+async function writeThisMonthFixed(btn) {
+  if (btn && btn.disabled) return;
+  const now = new Date();
+  const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
+  const ym = `${y}-${m}`, dateStr = `${ym}-01`;
+  // 本月已存在的固定支出備註（避免重複）
+  const existed = new Set((state.expenses || [])
+    .filter(e => String(e['日期']||'').slice(0,7) === ym)
+    .map(e => String(e['備註']||'').trim()));
+  const toAdd = (state.fixedTemplates || [])
+    .filter(t => String(t['啟用']||'是') === '是' && String(t['名稱']||'').trim() && Number(t['金額'])>0)
+    .filter(t => !existed.has(String(t['名稱']).trim()))
+    .map((t, i) => ({ '支出ID': 'E'+(Date.now()+i), '日期': dateStr, '類別': t['類別']||'固定支出', '金額': Number(t['金額'])||0, '備註': String(t['名稱']).trim() }));
+  if (!toAdd.length) { showToast('本月固定支出已全部入帳'); return; }
+  await withBtn(btn, async () => {
+    const r = await api('addBatch', '支出記錄', { rows: toAdd });
+    if (r.error) { showToast('寫入失敗：'+r.error, 'error'); return; }
+    state.expenses.push(...toAdd);
+    saveCache();
+    showToast(`已入帳 ${toAdd.length} 筆本月固定支出 ✓`);
+  });
+}
+
 // ── 業績統計 ────────────────────────────────
 function renderStats() {
   const thisYear = new Date().getFullYear();
@@ -1943,6 +1967,8 @@ function renderStats() {
     <div id="fixedTemplatePanel" class="hidden mt-3">
       <div id="fixedTplList"></div>
       <button class="btn btn-ghost text-sm w-full mt-2" onclick="addFixedTemplateRow()">＋ 新增固定支出</button>
+      <button class="btn btn-primary text-sm w-full mt-2" onclick="writeThisMonthFixed(this)">立即入帳本月（鎖定薪水金額）</button>
+      <div class="text-xs text-gray-500 mt-1">把本月啟用中的固定支出寫進記錄；已寫入的不重複。寫入後改模板不影響本月。</div>
     </div>
   </div>` : ''}
 
