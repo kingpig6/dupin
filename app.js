@@ -2808,11 +2808,16 @@ function queryStats() {
 
   document.getElementById('statsResult').innerHTML = `
     <div class="card mb-3">
-      <div class="flex justify-between mb-3">
+      <div class="flex justify-between items-center cursor-pointer" onclick="const d=document.getElementById('statsResultDetail');d.classList.toggle('hidden');this.querySelector('.sr-arrow').textContent=d.classList.contains('hidden')?'▼':'▲'">
         <span class="text-gray-400">查詢結果（${filtered.length} 件）</span>
-        <span class="text-2xl font-bold text-amber-400">$${total.toLocaleString()}</span>
+        <span class="flex items-center gap-2">
+          <span class="text-2xl font-bold text-amber-400">$${total.toLocaleString()}</span>
+          <span class="sr-arrow text-gray-400 text-lg">▼</span>
+        </span>
       </div>
-      ${detail || '<p class="text-gray-500 text-sm">無符合資料</p>'}
+      <div id="statsResultDetail" class="hidden mt-3">
+        ${detail || '<p class="text-gray-500 text-sm">無符合資料</p>'}
+      </div>
     </div>`;
 
   const prEl = document.getElementById('profitReport');
