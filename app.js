@@ -2348,31 +2348,46 @@ function renderMealsBody(from, to) {
   const inRange = state.meals.filter(m => { const d = String(m['日期']||'').slice(0,10); return d >= from && d <= to; });
   const total = inRange.reduce((s, m) => s + Number(m['金額']||0), 0);
 
-  // 每人小計
+  // 依用餐人分組：一人一張卡，點開看明細
   const byPerson = {};
-  inRange.forEach(m => { const p = m['用餐人']||'(未填)'; byPerson[p] = (byPerson[p]||0) + Number(m['金額']||0); });
-  const personRows = Object.entries(byPerson).sort((a,b)=>b[1]-a[1])
-    .map(([p,a]) => `<div class="flex justify-between text-sm py-0.5"><span class="text-gray-300">${p}</span><span class="text-amber-400">$${a.toLocaleString()}</span></div>`).join('');
+  inRange.forEach(m => { const p = m['用餐人']||'(未填)'; (byPerson[p] = byPerson[p] || []).push(m); });
 
-  // 明細（新到舊）
-  const rows = inRange.slice().sort((a,b)=>(String(a['日期'])>String(b['日期'])?-1:1)).map(m => {
+  const detailRow = m => {
     const id = m['記錄ID'];
     const edited = m['最後修改人'] && m['最後修改時間'] && (m['最後修改人'] !== m['登記人'] || String(m['最後修改時間']) !== String(m['建立時間']));
     return `
-    <div class="card mb-2" id="mealCard_${id}">
-      <div class="flex justify-between items-start">
-        <div class="flex-1 min-w-0">
-          <div class="font-semibold">${String(m['日期']||'').slice(0,10)} · ${m['用餐人']||''}${m['內容']?' · '+m['內容']:''}</div>
-          ${m['備註'] ? `<div class="text-xs text-gray-500">備註：${m['備註']}</div>` : ''}
-          <div class="text-xs text-gray-500 mt-0.5">登記：${m['登記人']||'?'}${m['建立時間']?' · '+String(m['建立時間']).slice(0,16):''}</div>
-          ${edited ? `<div class="text-xs text-yellow-500">改：${m['最後修改人']} · ${String(m['最後修改時間']).slice(0,16)}</div>` : ''}
-        </div>
-        <div class="flex flex-col items-end gap-2 ml-3 shrink-0">
-          <span class="text-amber-400 font-bold">$${Number(m['金額']||0).toLocaleString()}</span>
-          <button onclick="editMeal('${id}')" class="text-amber-400 text-sm" title="修改">✎</button>
-          ${isAdmin() ? `<button onclick="deleteMeal('${id}')" class="text-amber-400 text-sm" title="刪除">✕</button>` : ''}
-        </div>
+    <div id="mealCard_${id}" class="flex justify-between items-center py-1.5 border-b border-gray-700 gap-2">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm text-gray-200">${String(m['日期']||'').slice(0,10)}${m['內容']?' · '+m['內容']:''}</div>
+        <div class="text-xs text-gray-500">${m['備註']?'備註：'+m['備註']+' · ':''}登記：${m['登記人']||'?'}${edited?` · 改：${m['最後修改人']}`:''}</div>
       </div>
+      <span class="text-amber-400 font-semibold shrink-0">$${Number(m['金額']||0).toLocaleString()}</span>
+      <button onclick="editMeal('${id}')" class="text-amber-400 text-sm shrink-0" title="修改">✎</button>
+      ${isAdmin() ? `<button onclick="deleteMeal('${id}')" class="text-gray-500 hover:text-red-400 text-sm shrink-0" title="刪除">✕</button>` : ''}
+    </div>`;
+  };
+
+  const rows = Object.entries(byPerson).sort((a,b) => {
+    const ta = a[1].reduce((s,m)=>s+Number(m['金額']||0),0);
+    const tb = b[1].reduce((s,m)=>s+Number(m['金額']||0),0);
+    return tb - ta;
+  }).map(([person, list], idx) => {
+    const sub = list.reduce((s,m)=>s+Number(m['金額']||0),0);
+    const detail = list.slice().sort((a,b)=>(String(a['日期'])>String(b['日期'])?-1:1)).map(detailRow).join('');
+    const did = `mealPerson_${idx}`;
+    return `
+    <div class="card mb-2">
+      <div class="flex justify-between items-center cursor-pointer" onclick="const d=document.getElementById('${did}');d.classList.toggle('hidden');this.querySelector('.mp-arrow').textContent=d.classList.contains('hidden')?'▼':'▲'">
+        <div>
+          <span class="font-semibold">👤 ${person}</span>
+          <span class="text-xs text-gray-400 ml-2">${list.length} 筆</span>
+        </div>
+        <span class="flex items-center gap-2">
+          <span class="text-amber-400 font-bold">$${sub.toLocaleString()}</span>
+          <span class="mp-arrow text-gray-400">▼</span>
+        </span>
+      </div>
+      <div id="${did}" class="hidden mt-2">${detail}</div>
     </div>`;
   }).join('') || '<p class="text-gray-500 text-sm">此區間無餐飲記錄</p>';
 
@@ -2406,7 +2421,6 @@ function renderMealsBody(from, to) {
         <span class="text-gray-400">合計（${inRange.length} 筆）</span>
         <span class="text-xl font-bold text-amber-400">$${total.toLocaleString()}</span>
       </div>
-      ${personRows ? `<div class="mt-2 pt-2 border-t border-gray-700"><div class="section-title mb-1">每人小計</div>${personRows}</div>` : ''}
     </div>
 
     ${rows}`;
