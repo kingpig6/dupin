@@ -33,6 +33,7 @@ let state = {
   workerReturnRates: {},// { 姓名: 接單返還比例 }，如 { '李安': 0.2 }
   expenses: [],         // 支出記錄
   fixedTemplates: [],   // 固定支出模板
+  meals: [],            // 餐飲記錄（外賣墊付）
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
   viewWorker: null,   // 目前查看的師傅（進行中依師傅分組時）
@@ -152,6 +153,7 @@ function saveCache() {
       workerReturnRates: state.workerReturnRates,
       expenses: state.expenses,
       fixedTemplates: state.fixedTemplates,
+      meals: state.meals,
       ts: Date.now(),
     }));
   } catch(e) {}
@@ -171,6 +173,7 @@ function loadCache() {
     state.workerReturnRates  = cache.workerReturnRates  || {};
     state.expenses           = cache.expenses           || [];
     state.fixedTemplates  = cache.fixedTemplates  || [];
+    state.meals              = cache.meals              || [];
     return true;
   } catch(e) { return false; }
 }
@@ -184,19 +187,21 @@ async function loadAll() {
     showLoading(true);
   }
 
-  const [wi, c, s, w, exp, ftpl] = await Promise.all([
+  const [wi, c, s, w, exp, ftpl, meal] = await Promise.all([
     api('getAll', '工作項目'),
     api('getAll', '客戶'),
     api('getSettings'),
     api('getAll', '員工'),
     api('getAll', '支出記錄'),
     api('getAll', '固定支出'),
+    api('getAll', '餐飲記錄'),
   ]);
   if (wi.data)   state.items          = wi.data.map(normalizeItem);
   if (c.data)    state.customers      = c.data;
   if (s.data)    state.settings       = s.data;
   if (exp.data)  state.expenses       = exp.data;
   if (ftpl.data) state.fixedTemplates = ftpl.data;
+  if (meal.data) state.meals          = meal.data;
   if (w.data) {
     state.workers = w.data.map(r => r['姓名'] || '').filter(Boolean);
     state.workerRates = {};
@@ -1998,7 +2003,9 @@ function renderStats() {
       ${state.workers.map(w => `<option value="${w}">${w}</option>`).join('')}
     </select>
     <div id="workerCommissionBody"></div>
-  </div>`;
+  </div>
+
+  ${renderMealBlock()}`;
 }
 
 // ── 管理員：檢視任一員工的傭金頁 ─────────────
@@ -2302,7 +2309,223 @@ function renderMyCommission() {
     </div>
     <button class="btn btn-primary w-full" onclick="queryMyCommission()">查詢</button>
   </div>
-  <div id="myCommissionPaid"></div>`;
+  <div id="myCommissionPaid"></div>
+
+  ${adminCommissionWorker ? '' : renderMealBlock()}`;
+}
+
+// ── 餐飲記錄（外賣墊付，大家共用）─────────────
+function currentUserName() { return (auth && auth.name) ? auth.name : ''; }
+
+function renderMealBlock() {
+  const { start, end } = monthRange(0);
+  const monthTotal = (state.meals || [])
+    .filter(m => { const d = String(m['日期']||'').slice(0,10); return d >= start && d <= end; })
+    .reduce((s, m) => s + Number(m['金額']||0), 0);
+  return `
+  <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleMeals()">
+    <span class="section-title mb-0">🍱 餐飲記錄（本月 $${monthTotal.toLocaleString()}）</span>
+    <span id="arrow-meals" class="text-gray-400 text-lg">▼</span>
+  </div>
+  <div id="mealsSection" class="hidden mb-4"></div>`;
+}
+
+function toggleMeals() {
+  const el = document.getElementById('mealsSection');
+  const ar = document.getElementById('arrow-meals');
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) renderMealsBody();
+}
+
+let mealRowSeq = 0;
+function renderMealsBody(from, to) {
+  const el = document.getElementById('mealsSection');
+  if (!el) return;
+  const { start, end } = monthRange(0);
+  from = from || start; to = to || end;
+
+  const inRange = state.meals.filter(m => { const d = String(m['日期']||'').slice(0,10); return d >= from && d <= to; });
+  const total = inRange.reduce((s, m) => s + Number(m['金額']||0), 0);
+
+  // 每人小計
+  const byPerson = {};
+  inRange.forEach(m => { const p = m['用餐人']||'(未填)'; byPerson[p] = (byPerson[p]||0) + Number(m['金額']||0); });
+  const personRows = Object.entries(byPerson).sort((a,b)=>b[1]-a[1])
+    .map(([p,a]) => `<div class="flex justify-between text-sm py-0.5"><span class="text-gray-300">${p}</span><span class="text-amber-400">$${a.toLocaleString()}</span></div>`).join('');
+
+  // 明細（新到舊）
+  const rows = inRange.slice().sort((a,b)=>(String(a['日期'])>String(b['日期'])?-1:1)).map(m => {
+    const id = m['記錄ID'];
+    const edited = m['最後修改人'] && m['最後修改時間'] && (m['最後修改人'] !== m['登記人'] || String(m['最後修改時間']) !== String(m['建立時間']));
+    return `
+    <div class="card mb-2" id="mealCard_${id}">
+      <div class="flex justify-between items-start">
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold">${String(m['日期']||'').slice(0,10)} · ${m['用餐人']||''}${m['內容']?' · '+m['內容']:''}</div>
+          ${m['備註'] ? `<div class="text-xs text-gray-500">備註：${m['備註']}</div>` : ''}
+          <div class="text-xs text-gray-500 mt-0.5">登記：${m['登記人']||'?'}${m['建立時間']?' · '+String(m['建立時間']).slice(0,16):''}</div>
+          ${edited ? `<div class="text-xs text-yellow-500">改：${m['最後修改人']} · ${String(m['最後修改時間']).slice(0,16)}</div>` : ''}
+        </div>
+        <div class="flex flex-col items-end gap-2 ml-3 shrink-0">
+          <span class="text-amber-400 font-bold">$${Number(m['金額']||0).toLocaleString()}</span>
+          <button onclick="editMeal('${id}')" class="text-amber-400 text-sm" title="修改">✎</button>
+          ${isAdmin() ? `<button onclick="deleteMeal('${id}')" class="text-amber-400 text-sm" title="刪除">✕</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('') || '<p class="text-gray-500 text-sm">此區間無餐飲記錄</p>';
+
+  el.innerHTML = `
+    <div class="card mb-2">
+      <button type="button" onclick="document.getElementById('mealAddPanel').classList.toggle('hidden')" class="w-full flex items-center justify-between">
+        <span class="section-title mb-0">＋ 記一筆外賣</span>
+        <span class="text-xs text-gray-400">▼</span>
+      </button>
+      <div id="mealAddPanel" class="hidden mt-3 flex flex-col gap-2">
+        <div class="grid grid-cols-2 gap-2">
+          <input id="meal_date" type="date" value="${new Date().toISOString().slice(0,10)}"/>
+          <input id="meal_content" placeholder="店家/內容（選填）"/>
+        </div>
+        <input id="meal_note" placeholder="備註（選填）"/>
+        <div class="section-title mt-1 mb-0">用餐人與金額（可多人，各自金額）</div>
+        <div id="mealPeopleRows">${mealPersonRow(0)}</div>
+        <button type="button" class="text-amber-400 text-sm font-bold text-left" onclick="addMealPersonRow()">＋ 加一人</button>
+        <button class="btn btn-primary mt-1" onclick="saveMeals(this)">送出</button>
+      </div>
+    </div>
+
+    <div class="card mb-2">
+      <div class="flex items-end gap-2 mb-2">
+        <div class="flex-1"><label class="text-xs text-gray-400">起始日</label><input id="meal_from" type="date" value="${from}"/></div>
+        <div class="flex-1"><label class="text-xs text-gray-400">結束日</label><input id="meal_to" type="date" value="${to}"/></div>
+        <button class="btn btn-ghost text-sm px-3 shrink-0 mb-0" style="height:38px" onclick="mealSetMonth()">本月</button>
+      </div>
+      <button class="btn btn-ghost text-sm w-full" onclick="mealQuery()">查詢區間</button>
+      <div class="flex justify-between items-center mt-3 pt-2 border-t border-gray-700">
+        <span class="text-gray-400">合計（${inRange.length} 筆）</span>
+        <span class="text-xl font-bold text-amber-400">$${total.toLocaleString()}</span>
+      </div>
+      ${personRows ? `<div class="mt-2 pt-2 border-t border-gray-700"><div class="section-title mb-1">每人小計</div>${personRows}</div>` : ''}
+    </div>
+
+    ${rows}`;
+}
+
+function mealPersonRow(i) {
+  const opts = ['<option value="">選用餐人</option>']
+    .concat((state.workers||[]).map(w => `<option value="${w}">${w}</option>`)).join('');
+  return `
+  <div class="grid grid-cols-2 gap-2 mb-1" id="mealPRow_${i}">
+    <select id="mealP_name_${i}">${opts}</select>
+    <div class="flex gap-1">
+      <input id="mealP_amt_${i}" type="number" placeholder="金額" class="flex-1"/>
+      ${i>0?`<button type="button" onclick="document.getElementById('mealPRow_${i}').remove()" class="text-amber-400 text-sm px-1">✕</button>`:''}
+    </div>
+  </div>`;
+}
+function addMealPersonRow() {
+  mealRowSeq++;
+  const c = document.getElementById('mealPeopleRows');
+  const div = document.createElement('div');
+  div.innerHTML = mealPersonRow(mealRowSeq);
+  c.appendChild(div.firstElementChild);
+}
+
+async function saveMeals(btn) {
+  if (btn && btn.disabled) return;
+  const date    = document.getElementById('meal_date').value;
+  const content = document.getElementById('meal_content').value.trim();
+  const note    = document.getElementById('meal_note').value.trim();
+  const rows = document.querySelectorAll('[id^="mealPRow_"]');
+  const base = Date.now();
+  const toSave = [];
+  let i = 0;
+  for (const r of rows) {
+    const idx  = r.id.replace('mealPRow_', '');
+    const name = document.getElementById(`mealP_name_${idx}`)?.value || '';
+    const amt  = Number(document.getElementById(`mealP_amt_${idx}`)?.value) || 0;
+    if (!name || !amt) continue;
+    toSave.push({ '記錄ID': 'M' + (base + i), '日期': date, '內容': content, '用餐人': name, '金額': amt, '備註': note });
+    i++;
+  }
+  if (!toSave.length) { showToast('請至少填一位用餐人與金額'); return; }
+  await withBtn(btn, async () => {
+    const r = await api('addBatch', '餐飲記錄', { rows: toSave });
+    if (r.error) { showToast('記錄失敗：' + r.error, 'error'); return; }
+    // 本機先補上登記人（伺服器已蓋章，重新整理會拿到正式時間）
+    const who = currentUserName();
+    toSave.forEach(t => { t['登記人'] = who; t['最後修改人'] = who; });
+    state.meals.push(...toSave);
+    saveCache();
+    mealRowSeq = 0;
+    renderMealsBody();
+    showToast(`已記錄 ${toSave.length} 筆 ✓`);
+  });
+}
+
+function editMeal(id) {
+  const m = state.meals.find(x => String(x['記錄ID']) === String(id));
+  const card = document.getElementById(`mealCard_${id}`);
+  if (!m || !card) return;
+  const opts = (state.workers||[]).map(w => `<option value="${w}" ${m['用餐人']===w?'selected':''}>${w}</option>`).join('');
+  card.innerHTML = `
+    <div class="grid grid-cols-2 gap-2 mb-2">
+      <input id="em_date_${id}" type="date" value="${String(m['日期']||'').slice(0,10)}"/>
+      <select id="em_name_${id}"><option value="">選用餐人</option>${opts}</select>
+      <input id="em_content_${id}" value="${m['內容']||''}" placeholder="內容"/>
+      <input id="em_amt_${id}" type="number" value="${Number(m['金額'])||''}" placeholder="金額"/>
+    </div>
+    <input id="em_note_${id}" value="${m['備註']||''}" placeholder="備註" class="mb-2"/>
+    <div class="flex gap-2 justify-end">
+      <button onclick="renderMealsBody()" class="btn btn-ghost text-sm px-3">取消</button>
+      <button onclick="saveMealEdit('${id}',this)" class="btn btn-primary text-sm px-3">儲存</button>
+    </div>`;
+}
+
+async function saveMealEdit(id, btn) {
+  const m = state.meals.find(x => String(x['記錄ID']) === String(id));
+  if (!m) return;
+  const data = {
+    '日期':   document.getElementById(`em_date_${id}`).value,
+    '用餐人': document.getElementById(`em_name_${id}`).value,
+    '內容':   document.getElementById(`em_content_${id}`).value.trim(),
+    '金額':   Number(document.getElementById(`em_amt_${id}`).value) || 0,
+    '備註':   document.getElementById(`em_note_${id}`).value.trim(),
+  };
+  await withBtn(btn, async () => {
+    const r = await api('update', '餐飲記錄', { key: id, data });
+    if (r.error) { showToast('更新失敗：' + r.error, 'error'); return; }
+    Object.assign(m, data);
+    m['最後修改人'] = currentUserName();
+    saveCache();
+    renderMealsBody();
+    showToast('已更新 ✓');
+  });
+}
+
+async function deleteMeal(id) {
+  const btn = document.querySelector(`[onclick="deleteMeal('${id}')"]`);
+  if (btn && btn.dataset.confirmed !== '1') {
+    btn.dataset.confirmed = '1'; btn.textContent = '確定？';
+    setTimeout(() => { if (btn.dataset.confirmed==='1'){ btn.dataset.confirmed=''; btn.textContent='✕'; } }, 3000);
+    return;
+  }
+  state.meals = state.meals.filter(x => String(x['記錄ID']) !== String(id));
+  saveCache();
+  renderMealsBody();
+  await api('delete', '餐飲記錄', { key: id });
+  showToast('已刪除 ✓');
+}
+
+function mealSetMonth() {
+  const { start, end } = monthRange(0);
+  document.getElementById('meal_from').value = start;
+  document.getElementById('meal_to').value   = end;
+  renderMealsBody(start, end);
+}
+function mealQuery() {
+  renderMealsBody(document.getElementById('meal_from').value, document.getElementById('meal_to').value);
 }
 
 function renderMyFeeRows(items, emptyMsg) {
