@@ -2559,45 +2559,68 @@ function renderWorkerFeePaid(from, to) {
 }
 
 function renderProfitReport(from, to) {
-  // ── 收入：完工項目 ──
+  const inRange = d => d && d >= from && d <= to;
+  const rowLine = (left, amt, color) => `
+    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+      <span class="text-gray-300">${left}</span>
+      <span class="${color} shrink-0 ml-2">${amt}</span>
+    </div>`;
+
+  // ── 收入：完工項目（不含接單，因為接單的錢是員工先收，公司只收返還）──
   const incomeItems = state.items.filter(it =>
-    it['進度'] === '完成' && it['完工日期'] >= from && it['完工日期'] <= to
+    it['進度'] === '完成' && it['費用類型'] !== '接單' && inRange(it['完工日期'])
   ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const revenue = incomeItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
 
-  // ── 人員費用：已支付（接單返還為負，代表公司收回）──
-  const feeItems = state.items.filter(it =>
-    it['費用支付狀態'] === '已支付' && it['費用支付日期'] >= from && it['費用支付日期'] <= to
+  // ── 接單返還（已收回）：接單 已支付，公司實得的分潤 ──
+  const referralPaid = state.items.filter(it =>
+    it['費用類型'] === '接單' && it['費用支付狀態'] === '已支付' && inRange(it['費用支付日期'])
   ).sort((a, b) => (a['費用支付日期'] > b['費用支付日期'] ? -1 : 1));
-  const totalFees = feeItems.reduce((s, it) => s + bossPayable(it), 0);
+  const referralIncome = referralPaid.reduce((s, it) => s + returnAmt(it), 0);
+
+  // ── 人員費用：已支付的傭金/抽成（不含接單）──
+  const feeItems = state.items.filter(it =>
+    it['費用類型'] && it['費用類型'] !== '接單' && it['費用支付狀態'] === '已支付' && inRange(it['費用支付日期'])
+  ).sort((a, b) => (a['費用支付日期'] > b['費用支付日期'] ? -1 : 1));
+  const totalFees = feeItems.reduce((s, it) => s + commissionAmt(it), 0);
 
   // ── 公司支出 ──
-  const expItems = (state.expenses || []).filter(e => {
-    const d = String(e['日期'] || '').slice(0, 10);
-    return d >= from && d <= to;
-  }).sort((a, b) => (String(a['日期']) > String(b['日期']) ? -1 : 1));
+  const expItems = (state.expenses || []).filter(e => inRange(String(e['日期'] || '').slice(0, 10)))
+    .sort((a, b) => (String(a['日期']) > String(b['日期']) ? -1 : 1));
   const totalExp = expItems.reduce((s, e) => s + Number(e['金額'] || 0), 0);
   const byCategory = {};
   expItems.forEach(e => { const c = e['類別']||'其他'; byCategory[c] = (byCategory[c]||0) + Number(e['金額']||0); });
 
-  const profit = revenue - totalFees - totalExp;
+  const profit = revenue + referralIncome - totalFees - totalExp;
   const profitColor = profit >= 0 ? 'text-green-400' : 'text-red-400';
 
-  const incomeRows = incomeItems.map(it => `
-    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
-      <span class="text-gray-300">${it['完工日期']} · ${it['客戶']||''} · ${it['品名']||''}</span>
-      <span class="text-amber-400 shrink-0 ml-2">$${Number(it['金額']||0).toLocaleString()}</span>
-    </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無完工收入</p>';
+  // ── 未結算（全部尚未支付，不受查詢日期限制）──
+  const pendingFeeItems = state.items.filter(it =>
+    it['進度'] === '完成' && it['費用支付狀態'] === '未支付' &&
+    it['費用類型'] && it['費用類型'] !== '接單' && commissionAmt(it) > 0
+  );
+  const pendingFee = pendingFeeItems.reduce((s, it) => s + commissionAmt(it), 0);
 
-  const feeRows = feeItems.map(it => {
-    const amt = bossPayable(it);
-    const isReturn = it['費用類型'] === '接單';
-    return `
-    <div class="flex justify-between text-sm py-1 border-b border-gray-700">
-      <span class="text-gray-300">${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}${isReturn ? '（接單返還）' : ''}</span>
-      <span class="${amt < 0 ? 'text-emerald-400' : 'text-red-400'} shrink-0 ml-2">${amt < 0 ? '+$' + Math.abs(amt).toLocaleString() : '$' + amt.toLocaleString()}</span>
-    </div>`;
-  }).join('') || '<p class="text-xs text-gray-500 py-1">無已支付人員費用</p>';
+  const pendingRefItems = state.items.filter(it =>
+    it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && it['費用類型'] === '接單'
+  );
+  const pendingRef = pendingRefItems.reduce((s, it) => s + returnAmt(it), 0);
+
+  const estProfit = profit - pendingFee + pendingRef;
+  const estColor = estProfit >= 0 ? 'text-green-400' : 'text-red-400';
+
+  // 明細列
+  const incomeRows = incomeItems.map(it =>
+    rowLine(`${it['完工日期']} · ${it['客戶']||''} · ${it['品名']||''}`, `$${Number(it['金額']||0).toLocaleString()}`, 'text-amber-400')
+  ).join('') || '<p class="text-xs text-gray-500 py-1">無完工收入</p>';
+
+  const referralRows = referralPaid.map(it =>
+    rowLine(`${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}`, `+$${returnAmt(it).toLocaleString()}`, 'text-emerald-400')
+  ).join('') || '<p class="text-xs text-gray-500 py-1">無已收回接單返還</p>';
+
+  const feeRows = feeItems.map(it =>
+    rowLine(`${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}`, `$${commissionAmt(it).toLocaleString()}`, 'text-red-400')
+  ).join('') || '<p class="text-xs text-gray-500 py-1">無已支付人員費用</p>';
 
   const expRows = expItems.map(e => `
     <div class="flex justify-between items-center text-sm py-1 border-b border-gray-700 gap-2">
@@ -2606,19 +2629,34 @@ function renderProfitReport(from, to) {
       ${isAdmin() ? `<button onclick="deleteExpense('${e['支出ID']}',this)" class="text-gray-500 hover:text-red-400 shrink-0 text-xs px-1">✕</button>` : ''}
     </div>`).join('') || '<p class="text-xs text-gray-500 py-1">無支出記錄</p>';
 
+  const pendingFeeRows = pendingFeeItems
+    .slice().sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1))
+    .map(it => rowLine(`${it['完工日期']||''} · ${it['負責師傅']||''} · ${it['品名']||''}`, `$${commissionAmt(it).toLocaleString()}`, 'text-red-400'))
+    .join('') || '<p class="text-xs text-gray-500 py-1">無待支付</p>';
+
+  const pendingRefRows = pendingRefItems
+    .slice().sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1))
+    .map(it => rowLine(`${it['完工日期']||''} · ${it['負責師傅']||''} · ${it['品名']||''}`, `+$${returnAmt(it).toLocaleString()}`, 'text-emerald-400'))
+    .join('') || '<p class="text-xs text-gray-500 py-1">無待收回</p>';
+
+  const sectionRow = (id, title, amountHtml, body) => `
+    <div class="flex justify-between items-center mb-3 cursor-pointer border-t border-gray-700 pt-3" onclick="document.getElementById('${id}').classList.toggle('hidden')">
+      <span class="text-gray-300 font-semibold">${title}</span>
+      <span class="font-bold">${amountHtml} ▾</span>
+    </div>
+    <div id="${id}" class="hidden mb-3">${body}</div>`;
+
   return `
   <div class="card">
     <div class="flex justify-between items-center mb-3 cursor-pointer" onclick="document.getElementById('pr_income').classList.toggle('hidden')">
-      <span class="text-gray-300 font-semibold">收入（完工 ${incomeItems.length} 件）</span>
+      <span class="text-gray-300 font-semibold">收入（完工 ${incomeItems.length} 件・不含接單）</span>
       <span class="text-amber-400 font-bold">$${revenue.toLocaleString()} ▾</span>
     </div>
     <div id="pr_income" class="hidden mb-3">${incomeRows}</div>
 
-    <div class="flex justify-between items-center mb-3 cursor-pointer border-t border-gray-700 pt-3" onclick="document.getElementById('pr_fees').classList.toggle('hidden')">
-      <span class="text-gray-300 font-semibold">人員費用（已支付 ${feeItems.length} 件）</span>
-      <span class="text-red-400 font-bold">− $${totalFees.toLocaleString()} ▾</span>
-    </div>
-    <div id="pr_fees" class="hidden mb-3">${feeRows}</div>
+    ${sectionRow('pr_ref', `接單返還（已收回 ${referralPaid.length} 件）`, `<span class="text-emerald-400">+$${referralIncome.toLocaleString()}</span>`, referralRows)}
+
+    ${sectionRow('pr_fees', `人員費用（已支付 ${feeItems.length} 件）`, `<span class="text-red-400">− $${totalFees.toLocaleString()}</span>`, feeRows)}
 
     <div class="flex justify-between items-center mb-1 cursor-pointer border-t border-gray-700 pt-3" onclick="document.getElementById('pr_exp').classList.toggle('hidden')">
       <div>
@@ -2632,8 +2670,21 @@ function renderProfitReport(from, to) {
     <div id="pr_exp" class="hidden mb-3">${expRows}</div>
 
     <div class="flex justify-between items-center border-t-2 border-gray-500 pt-3 mt-2">
-      <span class="font-bold text-base">淨利</span>
+      <span class="font-bold text-base">淨利（已結算）</span>
       <span class="text-2xl font-bold ${profitColor}">$${profit.toLocaleString()}</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title mb-2">尚未結算（全部未支付）</div>
+    ${sectionRow('pr_pfee', `待支付傭金/抽成（${pendingFeeItems.length} 件）`, `<span class="text-red-400">− $${pendingFee.toLocaleString()}</span>`, pendingFeeRows)}
+    ${sectionRow('pr_pref', `待收回接單返還（${pendingRefItems.length} 件）`, `<span class="text-emerald-400">+$${pendingRef.toLocaleString()}</span>`, pendingRefRows)}
+    <div class="flex justify-between items-center border-t-2 border-gray-500 pt-3 mt-2">
+      <div>
+        <div class="font-bold text-base">預估淨利</div>
+        <div class="text-xs text-gray-500">已結算淨利 − 待支付 + 待收回</div>
+      </div>
+      <span class="text-xl font-bold ${estColor}">$${estProfit.toLocaleString()}</span>
     </div>
   </div>`;
 }
