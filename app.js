@@ -610,6 +610,7 @@ function renderCustomerDetail() {
             ${it['交貨期限'] ? ' · 交 ' + it['交貨期限'] : ''}
             ${it['建立者'] ? ' · 開單人 ' + it['建立者'] : ''}
           </div>
+          ${it['最後修改人'] ? `<div class="text-xs text-yellow-600 mb-1">最後修改：${it['最後修改人']}${it['最後修改時間'] ? ' · ' + String(it['最後修改時間']).slice(0,16) : ''}</div>` : ''}
           ${it['備註'] ? `<div class="text-xs text-gray-500 mb-1">備註：${it['備註']}</div>` : ''}
           ${it['完工日期'] ? `<div class="text-xs text-amber-400 mb-1">完工：${it['完工日期']}</div>` : ''}
           ${it['請款單狀態'] === '已開單' ? `<div class="text-xs text-blue-400 mb-1">請款單已開</div>` : ''}
@@ -711,6 +712,7 @@ async function cycleProgress(itemId, newProg) {
     data['完工日期'] = today;
   }
 
+  stampLocalModify(it);
   showView('customerDetail', state.viewCustomer);
   saveCache();
   const r = await api('update', '工作項目', { key: itemId, data });
@@ -735,6 +737,7 @@ async function updateItemField(itemId, field, value) {
   if (!it) return;
   const prev = it[field];
   it[field] = value;
+  stampLocalModify(it);
   showView('customerDetail', state.viewCustomer);
   saveCache();
   const r = await api('update', '工作項目', { key: itemId, data: { [field]: value } });
@@ -866,6 +869,7 @@ async function saveItem(id, btn) {
     '備註':     document.getElementById('ei_note').value.trim(),
   };
   Object.assign(it, data);
+  stampLocalModify(it);
   showView('customerDetail', state.viewCustomer);
   saveCache();
   await withBtn(btn, async () => {
@@ -2378,6 +2382,9 @@ function renderMyCommission() {
 
 // ── 餐飲記錄（外賣墊付，大家共用）─────────────
 function currentUserName() { return (auth && auth.name) ? auth.name : ''; }
+function nowStamp() { const d = new Date(); const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+// 本機先記上最後修改人/時間（伺服器也會蓋，重新整理拿到正式值）
+function stampLocalModify(it) { if (it) { it['最後修改人'] = currentUserName(); it['最後修改時間'] = nowStamp(); } }
 
 function renderMealBlock() {
   const { start, end } = monthRange(0);

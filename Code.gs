@@ -13,7 +13,7 @@ const SHEET_ID = '1P0a6jPoozsvuoemsQS9b3Pcpb3M7KWfNGahEUWT2NLU';
 const ss = SpreadsheetApp.openById(SHEET_ID);
 
 // ── 工作表欄位定義 ──────────────────────────
-// 工作項目：工作ID|訂單編號|客戶|開單日期|品名|規格|數量|單價|金額|交貨期限|進度|完工日期|收款狀態|車號|負責師傅|備註|完工照片|請款單狀態|費用類型|費用金額|費用支付狀態|費用支付日期|參考圖片|返還金額
+// 工作項目：工作ID|訂單編號|客戶|開單日期|品名|規格|數量|單價|金額|交貨期限|進度|完工日期|收款狀態|車號|負責師傅|備註|完工照片|請款單狀態|費用類型|費用金額|費用支付狀態|費用支付日期|參考圖片|返還金額|最後修改人|最後修改時間
 //   費用類型：傭金(固定) / 抽成(金額×抽成比例) / 接單(抽成，但需返還公司 金額×接單返還比例)
 // 客戶：客戶名稱|聯絡人|電話|統一編號|地址|備註
 // 員工：email|姓名|角色|抽成比例|接單返還比例
@@ -113,6 +113,12 @@ function handleRequest(e) {
       if (action === 'add' && body.data)    stampMeal(body.data, who, nowStr, true);
       if (action === 'addBatch' && body.rows) body.rows.forEach(r => stampMeal(r, who, nowStr, true));
       if (action === 'update' && body.data) stampMeal(body.data, who, nowStr, false);
+    }
+
+    // 工作項目：更新時記錄「最後修改人／時間」（開單人由 建立者 記錄）
+    if (sheet === '工作項目' && user && action === 'update' && body.data) {
+      body.data['最後修改人']   = user.name || user.email;
+      body.data['最後修改時間'] = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
     }
 
     let result;
