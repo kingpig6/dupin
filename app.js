@@ -2218,8 +2218,26 @@ function commissionFees() {
   return state.myFees;
 }
 
+// 某人某月固定薪水：優先讀「已寫入支出記錄」的固定值（記錄過不變），
+// 若該月尚未寫入則讀固定支出模板現值當預估。以名字比對（備註/名稱含姓名）
+function salaryForMonth(name, start, end) {
+  const nm = String(name || '').trim();
+  if (!nm) return { amount: 0, recorded: false };
+  const isSalaryCat = c => c === '固定支出' || c === '薪資';
+  const recorded = (state.expenses || []).filter(e => {
+    const d = String(e['日期'] || '').slice(0, 10);
+    return isSalaryCat(e['類別'] || '') && String(e['備註'] || '').includes(nm) && d >= start && d <= end;
+  }).reduce((s, e) => s + Number(e['金額'] || 0), 0);
+  if (recorded > 0) return { amount: recorded, recorded: true };
+  const tpl = (state.fixedTemplates || []).filter(t =>
+    String(t['啟用'] || '是') === '是' && isSalaryCat(String(t['類別'] || '')) && String(t['名稱'] || '').includes(nm)
+  ).reduce((s, t) => s + Number(t['金額'] || 0), 0);
+  return { amount: tpl, recorded: false };
+}
+
 function renderMyCommission() {
   const thisYear = new Date().getFullYear();
+  const meName = adminCommissionWorker || currentUserName();
 
   const unfinished = commissionFees().filter(it => it['進度'] !== '完成');
   const unfinishedTotal = unfinished.reduce((s, it) => s + effectiveFee(it), 0);
@@ -2227,23 +2245,29 @@ function renderMyCommission() {
   const { start: mStart, end: mEnd } = monthRange(0);
   const finishedThisMonth = commissionFees().filter(it => it['進度'] === '完成' && it['完工日期'] >= mStart && it['完工日期'] <= mEnd);
   const finishedThisMonthTotal = finishedThisMonth.reduce((s, it) => s + effectiveFee(it), 0);
-  const thisMonthTotal = unfinishedTotal + finishedThisMonthTotal;
+
+  const salaryInfo  = salaryForMonth(meName, mStart, mEnd);
+  const salaryMonth = salaryInfo.amount;
+  const thisMonthTotal = unfinishedTotal + finishedThisMonthTotal + salaryMonth;
 
   const { start: lStart, end: lEnd } = monthRange(-1);
-  const lastMonthTotal = commissionFees()
+  const lastMonthCommission = commissionFees()
     .filter(it => it['進度'] === '完成' && it['完工日期'] >= lStart && it['完工日期'] <= lEnd)
     .reduce((s, it) => s + effectiveFee(it), 0);
+  const lastMonthTotal = lastMonthCommission + salaryForMonth(meName, lStart, lEnd).amount;
 
   const rank = getRankInfo(thisMonthTotal);
   const ringGoal = getRingGoal(thisMonthTotal);
   const streak = computeMonthlyStreak();
   maybeShowNewHighToast(thisMonthTotal, lastMonthTotal);
 
-  // 雙環：填滿比例 = 本月合計／本階目標，未完成／已完成依比例分兩色
+  // 雙環：填滿比例 = 本月合計／本階目標；依「未完工預估 / 已完成 / 薪水」三段上色
   const totalPct = Math.min(1, ringGoal > 0 ? thisMonthTotal / ringGoal : 0);
   const totalDeg = totalPct * 360;
   const unfinishedDeg = thisMonthTotal > 0 ? (unfinishedTotal / thisMonthTotal) * totalDeg : 0;
-  const ringGradient = `conic-gradient(#f59e0b 0deg ${unfinishedDeg}deg, #fbbf24 ${unfinishedDeg}deg ${totalDeg}deg, #0f172a ${totalDeg}deg 360deg)`;
+  const finishedDeg   = thisMonthTotal > 0 ? (finishedThisMonthTotal / thisMonthTotal) * totalDeg : 0;
+  const salaryStart   = unfinishedDeg + finishedDeg;
+  const ringGradient = `conic-gradient(#f59e0b 0deg ${unfinishedDeg}deg, #fbbf24 ${unfinishedDeg}deg ${salaryStart}deg, #34d399 ${salaryStart}deg ${totalDeg}deg, #0f172a ${totalDeg}deg 360deg)`;
 
   const pending = commissionFees().filter(it => it['進度'] === '完成' && it['費用支付狀態'] === '未支付');
   const pendingTotal = pending.reduce((s, it) => s + effectiveFee(it), 0);
@@ -2277,10 +2301,22 @@ function renderMyCommission() {
       <div class="ring-legend">
         <div><span class="dot" style="background:#f59e0b"></span>未完工預估 $${unfinishedTotal.toLocaleString()}</div>
         <div><span class="dot" style="background:#fbbf24"></span>本月已完成 $${finishedThisMonthTotal.toLocaleString()}</div>
+        ${salaryMonth > 0 ? `<div><span class="dot" style="background:#34d399"></span>本月薪水 $${salaryMonth.toLocaleString()}</div>` : ''}
         <div style="color:#6b7280">本階目標 $${ringGoal.toLocaleString()}</div>
       </div>
     </div>
   </div>
+
+  ${salaryMonth > 0 ? `
+  <div class="card mb-4">
+    <div class="flex justify-between items-center">
+      <div>
+        <span class="section-title mb-0">本月固定薪水</span>
+        <div class="text-xs text-gray-500">${salaryInfo.recorded ? '已入帳（記錄後不變）' : '預估（讀自固定支出模板，尚未入帳）'}</div>
+      </div>
+      <span class="text-emerald-400 font-bold">$${salaryMonth.toLocaleString()}</span>
+    </div>
+  </div>` : ''}
 
   <div class="card mb-4">
     <div class="flex justify-between items-center mb-2">
