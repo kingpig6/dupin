@@ -2465,8 +2465,6 @@ function renderMealsBody(from, to) {
           <input id="meal_content" placeholder="店家/內容（選填）"/>
         </div>
         <input id="meal_note" placeholder="備註（選填）"/>
-        <button type="button" id="mealVoiceBtn" onclick="startMealVoice()" class="w-full py-2 rounded-lg font-bold text-white bg-blue-600 active:bg-blue-800">🎤 語音登記（說「小傑100 又嘉99」）</button>
-        <div id="mealVoiceResult" class="text-xs text-amber-300 min-h-4"></div>
         <div class="section-title mt-1 mb-0">用餐人與金額（可多人，各自金額）</div>
         <div id="mealPeopleRows">${mealPersonRow(0)}</div>
         <button type="button" class="text-amber-400 text-sm font-bold text-left" onclick="addMealPersonRow()">＋ 加一人</button>
@@ -2508,86 +2506,6 @@ function addMealPersonRow() {
   const div = document.createElement('div');
   div.innerHTML = mealPersonRow(mealRowSeq);
   c.appendChild(div.firstElementChild);
-}
-
-// ── 餐飲語音登記（本地辨識，說「小傑100 又嘉99」自動填人+金額）──
-let mealVoiceRec = null, mealVoiceActive = false, mealVoiceText = '', mealVoiceParsed = false, mealVoiceSilence = null;
-function mealVoiceReset() {
-  mealVoiceActive = false;
-  const btn = document.getElementById('mealVoiceBtn');
-  if (btn) { btn.textContent = '🎤 語音登記（說「小傑100 又嘉99」）'; btn.classList.remove('bg-amber-600'); btn.classList.add('bg-blue-600'); }
-}
-// 只解析一次（iOS 靠手動停止觸發，Android 靠 onend 觸發，避免重複）
-function finishMealVoice() {
-  clearTimeout(mealVoiceSilence);
-  if (mealVoiceParsed) return;
-  mealVoiceParsed = true;
-  if (mealVoiceText) parseMealVoice(mealVoiceText);
-}
-function startMealVoice() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { showToast('此瀏覽器不支援語音'); return; }
-  // 已在聆聽 → 這次點擊代表「停止並填入」（iOS 不會自動觸發 onend，改由此處填入）
-  if (mealVoiceActive) {
-    try { mealVoiceRec && mealVoiceRec.stop(); } catch (e) {}
-    mealVoiceReset();
-    finishMealVoice();
-    return;
-  }
-  mealVoiceText = ''; mealVoiceParsed = false;
-  mealVoiceRec = new SR();
-  mealVoiceRec.lang = 'zh-TW'; mealVoiceRec.interimResults = true; mealVoiceRec.continuous = true;
-  const btn = document.getElementById('mealVoiceBtn');
-  const res = document.getElementById('mealVoiceResult');
-  mealVoiceActive = true;
-  if (btn) { btn.textContent = '🔴 聆聽中…說完再點一次填入'; btn.classList.replace('bg-blue-600','bg-amber-600'); }
-  mealVoiceRec.onresult = e => {
-    mealVoiceText = Array.from(e.results).map(r => r[0].transcript).join('');
-    if (res) res.textContent = '辨識：' + mealVoiceText + '（說完再點一次按鈕填入）';
-    clearTimeout(mealVoiceSilence);
-    mealVoiceSilence = setTimeout(() => { try { mealVoiceRec.stop(); } catch (e) {} }, 4000);
-  };
-  mealVoiceRec.onend = () => { mealVoiceReset(); finishMealVoice(); };
-  mealVoiceRec.onerror = e => { if (e.error !== 'no-speech') showToast('語音錯誤：' + e.error); mealVoiceReset(); };
-  mealVoiceRec.start();
-}
-function mealZhNum(s) {
-  if (/^[\d,]+$/.test(s)) return parseInt(s.replace(/,/g, ''));
-  const map = { 零:0,一:1,二:2,兩:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,百:100,千:1000 };
-  let result = 0, tmp = 0;
-  for (const c of s) { const v = map[c]; if (v == null) continue; if (v >= 10) { result += (tmp||1)*v; tmp = 0; } else tmp = v; }
-  return result + tmp;
-}
-function parseMealVoice(text) {
-  const names = (state.workers || []);
-  // 找出每個名字在句子中的位置（一人取第一次出現）
-  const hits = [];
-  names.forEach(n => { const idx = text.indexOf(n); if (idx >= 0) hits.push({ name: n, idx }); });
-  if (!hits.length) { showToast('沒聽出用餐人，請確認名字或手動填'); return; }
-  hits.sort((a, b) => a.idx - b.idx);
-  const found = [];
-  hits.forEach((h, i) => {
-    const endIdx = i + 1 < hits.length ? hits[i + 1].idx : text.length;
-    const seg = text.slice(h.idx + h.name.length, endIdx); // 這個名字到下一個名字之間找金額
-    const m = seg.match(/([\d,]+|[零一二兩三四五六七八九十百千]+)/);
-    const amt = m ? mealZhNum(m[1]) : 0;
-    found.push({ name: h.name, amt });
-  });
-  if (!found.some(f => f.amt)) { showToast('聽到人名但沒聽到金額，已填人名，請補金額'); }
-  const c = document.getElementById('mealPeopleRows');
-  if (!c) return;
-  c.innerHTML = ''; mealRowSeq = 0;
-  found.forEach((f, i) => {
-    const div = document.createElement('div');
-    div.innerHTML = mealPersonRow(i);
-    c.appendChild(div.firstElementChild);
-    document.getElementById(`mealP_name_${i}`).value = f.name;
-    document.getElementById(`mealP_amt_${i}`).value = f.amt || '';
-    mealRowSeq = i;
-  });
-  const res = document.getElementById('mealVoiceResult');
-  if (res) res.textContent = `✓ 已填入 ${found.length} 人，請確認金額後送出`;
-  showToast(`語音填入 ${found.length} 人 ✓`);
 }
 
 async function saveMeals(btn) {
