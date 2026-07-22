@@ -19,6 +19,7 @@ const ss = SpreadsheetApp.openById(SHEET_ID);
 // 員工：email|姓名|角色|抽成比例|接單返還比例
 // 設定：鍵|值
 // 固定支出：固定支出ID|名稱|類別|金額|備註|啟用
+// 餐飲記錄：記錄ID|日期|內容|用餐人|金額|登記人|建立時間|最後修改人|最後修改時間|備註
 
 function doGet(e) {
   // 客戶查詢頁面：有 token 參數就直接回傳 HTML
@@ -105,6 +106,15 @@ function handleRequest(e) {
       }
     }
 
+    // 餐飲記錄：自動蓋稽核章（誰登記／誰修改／時間），防誤改可追溯
+    if (sheet === '餐飲記錄' && user) {
+      const who = user.name || user.email;
+      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+      if (action === 'add' && body.data)    stampMeal(body.data, who, nowStr, true);
+      if (action === 'addBatch' && body.rows) body.rows.forEach(r => stampMeal(r, who, nowStr, true));
+      if (action === 'update' && body.data) stampMeal(body.data, who, nowStr, false);
+    }
+
     let result;
     switch (action) {
       case 'getAll':          result = getAll(sheet, roleInfo); break;
@@ -139,6 +149,16 @@ function handleRequest(e) {
 
 function jsonOut(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// 餐飲記錄稽核章：新增時蓋登記人+建立時間；每次寫入都更新最後修改人+時間
+function stampMeal(data, who, nowStr, isCreate) {
+  if (isCreate) {
+    if (!data['登記人'])   data['登記人'] = who;
+    if (!data['建立時間']) data['建立時間'] = nowStr;
+  }
+  data['最後修改人']   = who;
+  data['最後修改時間'] = nowStr;
 }
 
 // ── 自家長效登入 token（A2）──────────────────
