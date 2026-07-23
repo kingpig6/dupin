@@ -370,7 +370,7 @@ function getCustomerView(token) {
   const all = itemSheet.getDataRange().getValues();
   const headers = all[0];
 
-  const visible = ['工作ID','訂單編號','客戶','開單日期','品名','規格','數量','單價','金額','交貨期限','進度','完工日期','收款狀態','備註'];
+  const visible = ['工作ID','訂單編號','客戶','開單日期','品名','規格','數量','單價','金額','交貨期限','進度','完工日期','收款狀態','備註','參考圖片'];
 
   const items = [];
   for (let i = 1; i < all.length; i++) {
