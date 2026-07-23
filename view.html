@@ -81,6 +81,14 @@ async function load() {
                 ${it['交貨期限'] ? `<div class="text-xs text-gray-500 mt-0.5">預計交期：${it['交貨期限']}</div>` : ''}
                 ${it['完工日期'] ? `<div class="text-xs text-amber-400 mt-0.5">完工：${it['完工日期']}</div>` : ''}
                 ${it['備註'] ? `<div class="text-xs text-gray-500 mt-0.5">備註：${it['備註']}</div>` : ''}
+                ${(() => {
+                  const refs = String(it['參考圖片']||'').split(',').map(u=>u.trim()).filter(Boolean);
+                  if (!refs.length) return '';
+                  return `<div class="mt-2"><div class="text-xs text-gray-500 mb-1">參考圖片</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                      ${refs.map(u=>`<a href="${u}" target="_blank"><img src="${u}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #374151;"/></a>`).join('')}
+                    </div></div>`;
+                })()}
                 <div class="mt-2">
                   <span class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${prog}</span>
                 </div>
