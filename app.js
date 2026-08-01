@@ -474,12 +474,19 @@ function renderOrdersContent() {
       <span id="arrow-${key}" class="text-gray-400 text-lg">${sectionOpen[key] ? '▲' : '▼'}</span>
     </div>`;
 
+  const sumAmount = items => items.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+  const sectionTotalFooter = items => items.length
+    ? `<div class="flex justify-between items-center px-1 pt-1 pb-3 border-t border-gray-700">
+         <span class="text-xs text-gray-400">小計（${items.length} 件）</span>
+         <span class="text-amber-400 font-bold text-lg">$${sumAmount(items).toLocaleString()}</span>
+       </div>` : '';
+
   const sectionBody = (items, key, emptyMsg, section) => {
     const groups = groupByCustomer(items);
     return `
     <div id="section-${key}" style="display:${sectionOpen[key] ? '' : 'none'}">
       ${groups.length
-        ? groups.map(([c, its]) => customerCard(c, its, section)).join('')
+        ? groups.map(([c, its]) => customerCard(c, its, section)).join('') + sectionTotalFooter(items)
         : `<p class="text-gray-500 text-sm mb-4">${emptyMsg}</p>`}
     </div>`;
   };
@@ -501,8 +508,9 @@ function renderOrdersContent() {
 
   const activeBody = activeGroupBy === 'worker'
     ? `<div id="section-active" style="display:${sectionOpen.active ? '' : 'none'}">
-        ${groupByWorker(activeItems).map(([w, its]) => workerCard(w, its)).join('')
-          || '<p class="text-gray-500 text-sm mb-4">暫無進行中工作</p>'}
+        ${activeItems.length
+          ? groupByWorker(activeItems).map(([w, its]) => workerCard(w, its)).join('') + sectionTotalFooter(activeItems)
+          : '<p class="text-gray-500 text-sm mb-4">暫無進行中工作</p>'}
       </div>`
     : sectionBody(activeItems, 'active', '暫無進行中工作', 'active');
 
