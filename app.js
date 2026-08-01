@@ -2682,7 +2682,8 @@ function queryMyCommission() {
   const items = commissionFees().filter(it =>
     it['進度'] === '完成' && it['完工日期'] >= from && it['完工日期'] <= to
   );
-  const commTotal = items.reduce((s, it) => s + workerIncome(it), 0);
+  // 與老闆結算一致：接單為員工先收全額、需返還公司，故用 bossPayable（接單=−返還）
+  const commTotal = items.reduce((s, it) => s + bossPayable(it), 0);
   const salary = salaryForMonth(meName, from, to).amount;
   const meal = state.meals.filter(m => {
     const d = String(m['日期']||'').slice(0,10);
@@ -2690,16 +2691,29 @@ function queryMyCommission() {
   }).reduce((s, m) => s + Number(m['金額']||0), 0);
   const net = commTotal + salary - meal;
 
+  const itemRows = items.slice()
+    .sort((a, b) => (String(a['完工日期']) > String(b['完工日期']) ? -1 : 1))
+    .map(it => {
+      const amt = bossPayable(it);
+      const isRef = it['費用類型'] === '接單';
+      const label = isRef ? `接單返還公司 −$${returnAmt(it).toLocaleString()}` : `${it['費用類型']||''} $${amt.toLocaleString()}`;
+      return `<div class="flex justify-between text-sm py-1 border-b border-gray-700">
+        <span class="text-gray-300">${it['完工日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
+        <span class="${isRef ? 'text-red-400' : 'text-amber-400'} shrink-0 ml-2">${label}</span>
+      </div>`;
+    }).join('') || '<p class="text-gray-500 text-sm">此區間無完工項目</p>';
+
   document.getElementById('myCommissionPaid').innerHTML = `
     <div class="card mb-2">
       <div class="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
         <span class="font-bold text-base">實際領取</span>
         <span class="text-2xl font-bold text-amber-400">$${net.toLocaleString()}</span>
       </div>
-      <div class="flex justify-between text-sm py-1"><span class="text-gray-300">傭金/抽成（${items.length} 件）</span><span class="text-amber-400">$${commTotal.toLocaleString()}</span></div>
+      <div class="flex justify-between text-sm py-1"><span class="text-gray-300">傭金/抽成／接單（${items.length} 件）</span><span class="${commTotal<0?'text-red-400':'text-amber-400'}">$${commTotal.toLocaleString()}</span></div>
       <div class="flex justify-between text-sm py-1"><span class="text-gray-300">薪水</span><span class="text-emerald-400">＋$${salary.toLocaleString()}</span></div>
       <div class="flex justify-between text-sm py-1"><span class="text-gray-300">餐費（公司墊付扣回）</span><span class="text-red-400">−$${meal.toLocaleString()}</span></div>
-      <div class="mt-2 pt-2 border-t border-gray-700">${renderMyFeeRows(items, '此區間無完工項目')}</div>
+      <div class="text-xs text-gray-500 mt-1">＊接單為你先向客人收全額，此處扣掉返還公司的部分</div>
+      <div class="mt-2 pt-2 border-t border-gray-700">${itemRows}</div>
     </div>`;
 }
 
