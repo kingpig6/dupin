@@ -2691,8 +2691,9 @@ function queryMyCommission() {
     const d = String(m['日期']||'').slice(0,10);
     return String(m['用餐人']||'').trim() === meName && d >= from && d <= to;
   }).reduce((s, m) => s + Number(m['金額']||0), 0);
-  const net    = commTotal  + salary - meal;   // 公司要給他（扣餐費）
-  const income = incomeComm + salary + meal;   // 他實際收入 = 抽成/傭金 + 薪水 + 餐費 + 接單自留份
+  const net    = commTotal  + salary - meal;   // 公司要給他（扣餐費、扣接單返還）
+  // 實際收入 = 實際領取 + 接單全額 + 餐費（餐費抵消）= 抽成/傭金 + 薪水 + 接單自留份
+  const income = incomeComm + salary;
 
   const itemRows = items.slice()
     .sort((a, b) => (String(a['完工日期']) > String(b['完工日期']) ? -1 : 1))
@@ -2713,7 +2714,7 @@ function queryMyCommission() {
         <span class="text-2xl font-bold text-amber-400">$${net.toLocaleString()}</span>
       </div>
       <div class="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
-        <span class="text-xs text-gray-400">實際收入（含接單自收＋餐費福利）</span>
+        <span class="text-xs text-gray-400">實際收入（含接單自收，餐費由公司墊付不計）</span>
         <span class="text-sm font-semibold text-gray-300">$${income.toLocaleString()}</span>
       </div>
       <div class="flex justify-between text-sm py-1"><span class="text-gray-300">傭金/抽成／接單（${items.length} 件）</span><span class="${commTotal<0?'text-red-400':'text-amber-400'}">$${commTotal.toLocaleString()}</span></div>
