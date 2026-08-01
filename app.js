@@ -340,7 +340,7 @@ function render() {
       if (!isAdmin()) adminCommissionWorker = null;
       app.innerHTML = isAdmin() ? renderStats() : renderMyCommission();
       if (isAdmin()) requestAnimationFrame(queryStats); // 進頁自動查本月
-      if (!isAdmin()) requestAnimationFrame(startCommissionAnimations);
+      if (!isAdmin()) requestAnimationFrame(() => { startCommissionAnimations(); queryMyCommission(); });
       break;
   }
 }
@@ -2281,6 +2281,7 @@ function salaryForMonth(name, start, end) {
 
 function renderMyCommission() {
   const thisYear = new Date().getFullYear();
+  const { start: qmFrom, end: qmTo } = monthRange(0);
   const meName = adminCommissionWorker || currentUserName();
 
   const unfinished = commissionFees().filter(it => it['進度'] !== '完成');
@@ -2379,13 +2380,18 @@ function renderMyCommission() {
   </div>
 
   <div class="card mb-4">
-    <div class="section-title">已結款查詢</div>
+    <div class="section-title">月結查詢（實際領取）</div>
+    <div class="mb-2">
+      <label class="text-xs text-gray-400">快速選月份</label>
+      <select id="mc_month" onchange="setMyCommissionMonth(this.value)">
+        ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===(new Date().getMonth()+1)?'selected':''}>${thisYear} 年 ${m} 月</option>`).join('')}
+      </select>
+    </div>
     <div class="flex items-end gap-2 mb-2">
       <div class="flex-1"><label class="text-xs text-gray-400">起始日</label>
-        <input id="mc_from" type="date" value="${thisYear}-01-01"/></div>
+        <input id="mc_from" type="date" value="${qmFrom}"/></div>
       <div class="flex-1"><label class="text-xs text-gray-400">結束日</label>
-        <input id="mc_to" type="date" value="${thisYear}-12-31"/></div>
-      <button class="btn btn-ghost text-sm px-3 shrink-0 mb-0" style="height:38px" onclick="setMyCommissionMonth()">本月</button>
+        <input id="mc_to" type="date" value="${qmTo}"/></div>
     </div>
     <button class="btn btn-primary w-full" onclick="queryMyCommission()">查詢</button>
   </div>
@@ -2647,31 +2653,44 @@ function renderMyFeeRows(items, emptyMsg) {
     </div>`).join('');
 }
 
-function setMyCommissionMonth() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const last = new Date(y, now.getMonth() + 1, 0).getDate();
-  document.getElementById('mc_from').value = `${y}-${m}-01`;
-  document.getElementById('mc_to').value   = `${y}-${m}-${String(last).padStart(2,'0')}`;
+// 選查詢月份（1-12）：當年該月 1 號～月底並查詢
+function setMyCommissionMonth(month) {
+  const m = Number(month) || (new Date().getMonth() + 1);
+  const y = new Date().getFullYear();
+  const mm = String(m).padStart(2, '0');
+  const last = new Date(y, m, 0).getDate();
+  document.getElementById('mc_from').value = `${y}-${mm}-01`;
+  document.getElementById('mc_to').value   = `${y}-${mm}-${String(last).padStart(2,'0')}`;
   queryMyCommission();
 }
 
+// 該期間實際領取 = 傭金/抽成(完工於期間) ＋薪水 −餐費
 function queryMyCommission() {
   const from = document.getElementById('mc_from').value;
   const to   = document.getElementById('mc_to').value;
-  const paid = commissionFees().filter(it => {
-    const d = it['費用支付日期'] || '';
-    return it['費用支付狀態'] === '已支付' && (!from || (d >= from && d <= to));
-  });
-  const total = paid.reduce((s, it) => s + workerIncome(it), 0);
+  const meName = adminCommissionWorker || currentUserName();
+
+  const items = commissionFees().filter(it =>
+    it['進度'] === '完成' && it['完工日期'] >= from && it['完工日期'] <= to
+  );
+  const commTotal = items.reduce((s, it) => s + workerIncome(it), 0);
+  const salary = salaryForMonth(meName, from, to).amount;
+  const meal = state.meals.filter(m => {
+    const d = String(m['日期']||'').slice(0,10);
+    return String(m['用餐人']||'').trim() === meName && d >= from && d <= to;
+  }).reduce((s, m) => s + Number(m['金額']||0), 0);
+  const net = commTotal + salary - meal;
+
   document.getElementById('myCommissionPaid').innerHTML = `
     <div class="card mb-2">
-      <div class="flex justify-between items-center mb-2">
-        <span class="section-title mb-0">已結款（${paid.length} 件）</span>
-        <span class="text-amber-400 font-bold">$${total.toLocaleString()}</span>
+      <div class="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
+        <span class="font-bold text-base">實際領取</span>
+        <span class="text-2xl font-bold text-amber-400">$${net.toLocaleString()}</span>
       </div>
-      ${renderMyFeeRows(paid, '此區間無已結款項目')}
+      <div class="flex justify-between text-sm py-1"><span class="text-gray-300">傭金/抽成（${items.length} 件）</span><span class="text-amber-400">$${commTotal.toLocaleString()}</span></div>
+      <div class="flex justify-between text-sm py-1"><span class="text-gray-300">薪水</span><span class="text-emerald-400">＋$${salary.toLocaleString()}</span></div>
+      <div class="flex justify-between text-sm py-1"><span class="text-gray-300">餐費（公司墊付扣回）</span><span class="text-red-400">−$${meal.toLocaleString()}</span></div>
+      <div class="mt-2 pt-2 border-t border-gray-700">${renderMyFeeRows(items, '此區間無完工項目')}</div>
     </div>`;
 }
 
