@@ -2070,7 +2070,8 @@ function renderWorkerCommission() {
   const body = document.getElementById('workerCommissionBody');
   if (body) {
     body.innerHTML = renderMyCommission();
-    requestAnimationFrame(startCommissionAnimations);
+    // 與員工本人頁完全一致：同樣自動帶出本月月結查詢
+    requestAnimationFrame(() => { startCommissionAnimations(); queryMyCommission(); });
   }
   adminCommissionWorker = sel.value; // 保持選取狀態供後續查詢（已結款查詢等）使用
 }
