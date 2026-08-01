@@ -1984,7 +1984,11 @@ function renderStats() {
         <input id="s_from" type="date" value="${mFrom}"/></div>
       <div class="flex-1"><label class="text-xs text-gray-400">結束日</label>
         <input id="s_to" type="date" value="${mTo}"/></div>
-      <button class="btn btn-ghost text-sm px-3 shrink-0 mb-0" style="height:38px" onclick="setThisMonth()">本月</button>
+      <div class="shrink-0"><label class="text-xs text-gray-400">查詢月份</label>
+        <select id="s_month" onchange="setQueryMonth(this.value)" style="height:38px">
+          ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===(new Date().getMonth()+1)?'selected':''}>${m} 月</option>`).join('')}
+        </select>
+      </div>
     </div>
     <select id="s_cus" class="mb-3">
       <option value="">全部客戶</option>
@@ -2682,13 +2686,17 @@ function toggleStatsWorker() {
   }
 }
 
-function setThisMonth() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const last = new Date(y, now.getMonth() + 1, 0).getDate();
-  document.getElementById('s_from').value = `${y}-${m}-01`;
-  document.getElementById('s_to').value   = `${y}-${m}-${String(last).padStart(2,'0')}`;
+function setThisMonth() { setQueryMonth(new Date().getMonth() + 1); }
+
+// 選查詢月份（1-12），設為當年該月 1 號～月底並查詢
+function setQueryMonth(month) {
+  const m = Number(month);
+  if (!m) return;
+  const y = new Date().getFullYear();
+  const mm = String(m).padStart(2, '0');
+  const last = new Date(y, m, 0).getDate();
+  document.getElementById('s_from').value = `${y}-${mm}-01`;
+  document.getElementById('s_to').value   = `${y}-${mm}-${String(last).padStart(2,'0')}`;
   queryStats();
 }
 
