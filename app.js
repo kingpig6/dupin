@@ -1943,6 +1943,7 @@ async function writeThisMonthFixed(btn) {
 // ── 業績統計 ────────────────────────────────
 function renderStats() {
   const thisYear = new Date().getFullYear();
+  const { start: mFrom, end: mTo } = monthRange(0);
   return `
   ${isAdmin() ? `
   <div class="card mb-4">
@@ -1980,9 +1981,9 @@ function renderStats() {
     <div class="section-title">自訂查詢</div>
     <div class="flex items-end gap-2 mb-2">
       <div class="flex-1"><label class="text-xs text-gray-400">起始日</label>
-        <input id="s_from" type="date" value="${thisYear}-01-01"/></div>
+        <input id="s_from" type="date" value="${mFrom}"/></div>
       <div class="flex-1"><label class="text-xs text-gray-400">結束日</label>
-        <input id="s_to" type="date" value="${thisYear}-12-31"/></div>
+        <input id="s_to" type="date" value="${mTo}"/></div>
       <button class="btn btn-ghost text-sm px-3 shrink-0 mb-0" style="height:38px" onclick="setThisMonth()">本月</button>
     </div>
     <select id="s_cus" class="mb-3">
@@ -2412,7 +2413,11 @@ function renderMealsBody(from, to) {
   const el = document.getElementById('mealsSection');
   if (!el) return;
   const { start, end } = monthRange(0);
-  from = from || start; to = to || end;
+  // 業績頁：日期跟「自訂查詢」共用；員工頁：用自己的日期選單
+  const sFromEl = document.getElementById('s_from'), sToEl = document.getElementById('s_to');
+  const shared = !!(sFromEl && sToEl);
+  if (shared) { from = sFromEl.value || start; to = sToEl.value || end; }
+  else { from = from || start; to = to || end; }
 
   const inRange = state.meals.filter(m => { const d = String(m['日期']||'').slice(0,10); return d >= from && d <= to; });
   const total = inRange.reduce((s, m) => s + Number(m['金額']||0), 0);
@@ -2480,12 +2485,16 @@ function renderMealsBody(from, to) {
     </div>
 
     <div class="card mb-2">
+      ${shared ? `
+      <div class="text-xs text-gray-500 mb-2">日期跟隨上方「自訂查詢」（${from} ~ ${to}），按「查詢」即同步</div>
+      ` : `
       <div class="flex items-end gap-2 mb-2">
         <div class="flex-1"><label class="text-xs text-gray-400">起始日</label><input id="meal_from" type="date" value="${from}"/></div>
         <div class="flex-1"><label class="text-xs text-gray-400">結束日</label><input id="meal_to" type="date" value="${to}"/></div>
         <button class="btn btn-ghost text-sm px-3 shrink-0 mb-0" style="height:38px" onclick="mealSetMonth()">本月</button>
       </div>
       <button class="btn btn-ghost text-sm w-full" onclick="mealQuery()">查詢區間</button>
+      `}
       <div class="flex justify-between items-center mt-3 pt-2 border-t border-gray-700">
         <span class="text-gray-400">合計（${inRange.length} 筆）</span>
         <span class="text-xl font-bold text-amber-400">$${total.toLocaleString()}</span>
@@ -2781,21 +2790,39 @@ function renderStatsByWorker(from, to) {
 }
 
 function renderWorkerFeePending() {
+  const { start: mStart, end: mEnd } = monthRange(0);
+
+  // 傭金/抽成待付：依師傅分組
   const pending = state.items.filter(it =>
     it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && it['費用類型'] && bossPayable(it) !== 0
   );
-  if (!pending.length) return '<p class="text-gray-500 text-sm mb-4">無待支付費用</p>';
   const byWorker = {};
-  pending.forEach(it => {
-    const w = it['負責師傅'] || '(未指定)';
-    if (!byWorker[w]) byWorker[w] = [];
-    byWorker[w].push(it);
+  pending.forEach(it => { const w = it['負責師傅'] || '(未指定)'; (byWorker[w] = byWorker[w] || []).push(it); });
+
+  // 本月餐費：依用餐人分組
+  const mealByWorker = {};
+  state.meals.forEach(m => {
+    const d = String(m['日期']||'').slice(0,10);
+    if (d >= mStart && d <= mEnd) { const p = m['用餐人']||''; mealByWorker[p] = (mealByWorker[p]||0) + Number(m['金額']||0); }
   });
-  return Object.entries(byWorker).map(([name, items], idx) => {
-    const total = items.reduce((s, it) => s + bossPayable(it), 0);
-    const ids   = items.map(it => String(it['工作ID']));
+
+  // 名單 = 有待付傭金 ∪ 有本月餐費 ∪ 有本月薪水
+  const names = new Set([...Object.keys(byWorker), ...Object.keys(mealByWorker).filter(Boolean)]);
+  (state.workers || []).forEach(w => { if (salaryForMonth(w, mStart, mEnd).amount > 0) names.add(w); });
+  if (!names.size) return '<p class="text-gray-500 text-sm mb-4">無待支付</p>';
+
+  return Array.from(names).map((name, idx) => {
+    const items = byWorker[name] || [];
+    const pendComm = items.reduce((s, it) => s + bossPayable(it), 0);
+    const salInfo  = salaryForMonth(name, mStart, mEnd);
+    const salary   = salInfo.amount;
+    const meal     = mealByWorker[name] || 0;
+    const net      = pendComm + salary - meal;
+    const ids      = items.map(it => String(it['工作ID']));
+    const idsJson  = JSON.stringify(ids).replace(/"/g, '&quot;');
     const detailId = `wfp_${idx}`;
-    const rows = items.map(it => {
+
+    const commRows = items.map(it => {
       const amt = bossPayable(it);
       const label = it['費用類型'] === '接單' ? `接單返還 −$${returnAmt(it).toLocaleString()}` : `${it['費用類型']} $${amt.toLocaleString()}`;
       return `
@@ -2803,27 +2830,81 @@ function renderWorkerFeePending() {
         <span class="text-gray-300">${it['完工日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
         <span class="${amt < 0 ? 'text-emerald-400' : 'text-amber-400'} shrink-0 ml-2">${label}</span>
       </div>`;
-    }).join('');
-    const idsJson = JSON.stringify(ids).replace(/"/g, '&quot;');
-    const totalLabel = total < 0 ? `收回 $${Math.abs(total).toLocaleString()}` : `$${total.toLocaleString()}`;
-    const btnLabel = total < 0 ? '結算（員工返還）' : '支付全部';
+    }).join('') || '<p class="text-xs text-gray-500 py-1">本月無傭金/抽成</p>';
+
+    const netLabel = v => v < 0 ? `收回 $${Math.abs(v).toLocaleString()}` : `$${v.toLocaleString()}`;
+    const netColor = v => v < 0 ? 'text-emerald-400' : 'text-amber-400';
+
     return `
     <div class="card mb-2">
       <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
         <div>
-          <div class="font-semibold">${name}</div>
-          <div class="text-xs text-gray-400">${items.length} 件待結算</div>
+          <div class="font-semibold">👤 ${name}</div>
+          <div class="text-xs text-gray-400">傭金 $${pendComm.toLocaleString()}${salary?` ＋薪 $${salary.toLocaleString()}`:''}${meal?` －餐 $${meal.toLocaleString()}`:''}</div>
         </div>
-        <span class="${total < 0 ? 'text-emerald-400' : 'text-amber-400'} font-bold">${totalLabel}</span>
+        <span class="${netColor(net)} font-bold" id="pendHead_${idx}">實付 ${netLabel(net)}</span>
       </div>
       <div id="${detailId}" class="hidden mt-2">
-        ${rows}
-        <button class="btn btn-primary w-full mt-3"
-          onclick="confirmPayWorker('${name}', JSON.parse(this.dataset.ids), this)"
-          data-ids="${idsJson}">${btnLabel}</button>
+        <div class="text-xs text-gray-500 mb-1">傭金/抽成待付</div>
+        ${commRows}
+        <div class="flex justify-between items-center text-sm py-2 border-b border-gray-700">
+          <span class="text-gray-300">本月薪水${salInfo.recorded ? '' : '（預估，可改）'}</span>
+          <div class="flex items-center gap-1">
+            <span class="text-emerald-400">＋$</span>
+            <input type="number" value="${salary}" data-pend="${pendComm}" data-meal="${meal}"
+              oninput="updatePendingNet(${idx}, this)" onchange="saveWorkerSalary('${name.replace(/'/g,"\\'")}', this)"
+              class="w-24 text-right text-sm" style="padding:4px 8px;"/>
+          </div>
+        </div>
+        <div class="flex justify-between items-center text-sm py-2 border-b border-gray-700">
+          <span class="text-gray-300">本月餐費（公司墊付扣回）</span>
+          <span class="text-red-400">−$${meal.toLocaleString()}</span>
+        </div>
+        <div class="flex justify-between items-center pt-2">
+          <span class="font-bold">實付</span>
+          <span class="text-xl font-bold ${netColor(net)}" id="pendNet_${idx}">${netLabel(net)}</span>
+        </div>
+        ${items.length ? `<button class="btn btn-primary w-full mt-3"
+          onclick="confirmPayWorker('${name.replace(/'/g,"\\'")}', JSON.parse(this.dataset.ids), this)"
+          data-ids="${idsJson}">結算傭金/抽成（${items.length} 件）</button>` : ''}
       </div>
     </div>`;
   }).join('');
+}
+
+// 薪水輸入即時更新「實付」淨額
+function updatePendingNet(idx, el) {
+  const pend = Number(el.dataset.pend||0), meal = Number(el.dataset.meal||0);
+  const net = pend + (Number(el.value)||0) - meal;
+  const label = net < 0 ? `收回 $${Math.abs(net).toLocaleString()}` : `$${net.toLocaleString()}`;
+  const cls = net < 0 ? 'text-emerald-400' : 'text-amber-400';
+  const netEl = document.getElementById('pendNet_'+idx);
+  const headEl = document.getElementById('pendHead_'+idx);
+  if (netEl) { netEl.textContent = label; netEl.className = 'text-xl font-bold ' + cls; }
+  if (headEl) { headEl.textContent = '實付 ' + label; headEl.className = cls + ' font-bold'; }
+}
+
+// 修改某師傅本月薪水（因請假等）：寫回本月支出記錄（鎖定該月、損益同步）
+async function saveWorkerSalary(name, el) {
+  const amount = Number(el.value) || 0;
+  const { start } = monthRange(0);
+  const ym = start.slice(0, 7);
+  const isSalaryCat = c => c === '固定支出' || c === '薪資';
+  const existing = (state.expenses || []).find(e =>
+    isSalaryCat(e['類別'] || '') && String(e['備註'] || '').includes(name) && String(e['日期']||'').slice(0,7) === ym
+  );
+  if (existing) {
+    existing['金額'] = amount;
+    await api('update', '支出記錄', { key: existing['支出ID'], data: { '金額': amount } });
+  } else {
+    const data = { '支出ID': 'E' + Date.now(), '日期': start, '類別': '固定支出', '金額': amount, '備註': name + '薪水' };
+    state.expenses.push(data);
+    await api('add', '支出記錄', { data });
+  }
+  saveCache();
+  showToast(`已更新 ${name} 本月薪水 ✓`);
+  const wp = document.getElementById('workerFeePending');
+  if (wp && !wp.classList.contains('hidden')) wp.innerHTML = renderWorkerFeePending();
 }
 
 function renderWorkerFeePaid(from, to) {
@@ -3135,6 +3216,8 @@ function queryStats() {
   if (wkEl && !wkEl.classList.contains('hidden')) wkEl.innerHTML = renderStatsByWorker(from, to);
   const paidEl = document.getElementById('workerFeePaid');
   if (paidEl && !paidEl.classList.contains('hidden')) paidEl.innerHTML = renderWorkerFeePaid(from, to);
+  const mealsEl = document.getElementById('mealsSection');
+  if (mealsEl && !mealsEl.classList.contains('hidden')) renderMealsBody();
 }
 
 // ── 工具函式 ────────────────────────────────
