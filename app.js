@@ -2682,14 +2682,17 @@ function queryMyCommission() {
   const items = commissionFees().filter(it =>
     it['進度'] === '完成' && it['完工日期'] >= from && it['完工日期'] <= to
   );
-  // 與老闆結算一致：接單為員工先收全額、需返還公司，故用 bossPayable（接單=−返還）
+  // 實際領取（公司要給他）：接單=−返還（與老闆結算一致）
   const commTotal = items.reduce((s, it) => s + bossPayable(it), 0);
+  // 實際收入（他實際賺到）：接單=自己留的份（referralIncome，跟客人直接收的）
+  const incomeComm = items.reduce((s, it) => s + workerIncome(it), 0);
   const salary = salaryForMonth(meName, from, to).amount;
   const meal = state.meals.filter(m => {
     const d = String(m['日期']||'').slice(0,10);
     return String(m['用餐人']||'').trim() === meName && d >= from && d <= to;
   }).reduce((s, m) => s + Number(m['金額']||0), 0);
-  const net = commTotal + salary - meal;
+  const net    = commTotal  + salary - meal;   // 公司要給他（扣餐費）
+  const income = incomeComm + salary + meal;   // 他實際收入 = 抽成/傭金 + 薪水 + 餐費 + 接單自留份
 
   const itemRows = items.slice()
     .sort((a, b) => (String(a['完工日期']) > String(b['完工日期']) ? -1 : 1))
@@ -2705,9 +2708,13 @@ function queryMyCommission() {
 
   document.getElementById('myCommissionPaid').innerHTML = `
     <div class="card mb-2">
-      <div class="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
-        <span class="font-bold text-base">實際領取</span>
+      <div class="flex justify-between items-center pb-1">
+        <span class="font-bold text-base">實際領取<span class="text-xs text-gray-500 font-normal">（公司要給你）</span></span>
         <span class="text-2xl font-bold text-amber-400">$${net.toLocaleString()}</span>
+      </div>
+      <div class="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
+        <span class="text-xs text-gray-400">實際收入（含接單自收＋餐費福利）</span>
+        <span class="text-sm font-semibold text-gray-300">$${income.toLocaleString()}</span>
       </div>
       <div class="flex justify-between text-sm py-1"><span class="text-gray-300">傭金/抽成／接單（${items.length} 件）</span><span class="${commTotal<0?'text-red-400':'text-amber-400'}">$${commTotal.toLocaleString()}</span></div>
       <div class="flex justify-between text-sm py-1"><span class="text-gray-300">薪水</span><span class="text-emerald-400">＋$${salary.toLocaleString()}</span></div>
