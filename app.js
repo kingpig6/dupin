@@ -34,6 +34,7 @@ let state = {
   expenses: [],         // 支出記錄
   fixedTemplates: [],   // 固定支出模板
   meals: [],            // 餐飲記錄（外賣墊付）
+  settlements: [],      // 結算記錄（某師傅某月已結清）
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
   viewWorker: null,   // 目前查看的師傅（進行中依師傅分組時）
@@ -154,6 +155,7 @@ function saveCache() {
       expenses: state.expenses,
       fixedTemplates: state.fixedTemplates,
       meals: state.meals,
+      settlements: state.settlements,
       ts: Date.now(),
     }));
   } catch(e) {}
@@ -174,6 +176,7 @@ function loadCache() {
     state.expenses           = cache.expenses           || [];
     state.fixedTemplates  = cache.fixedTemplates  || [];
     state.meals              = cache.meals              || [];
+    state.settlements        = cache.settlements        || [];
     return true;
   } catch(e) { return false; }
 }
@@ -187,7 +190,7 @@ async function loadAll() {
     showLoading(true);
   }
 
-  const [wi, c, s, w, exp, ftpl, meal] = await Promise.all([
+  const [wi, c, s, w, exp, ftpl, meal, setl] = await Promise.all([
     api('getAll', '工作項目'),
     api('getAll', '客戶'),
     api('getSettings'),
@@ -195,6 +198,7 @@ async function loadAll() {
     api('getAll', '支出記錄'),
     api('getAll', '固定支出'),
     api('getAll', '餐飲記錄'),
+    api('getAll', '結算記錄'),
   ]);
   if (wi.data)   state.items          = wi.data.map(normalizeItem);
   if (c.data)    state.customers      = c.data;
@@ -202,6 +206,7 @@ async function loadAll() {
   if (exp.data)  state.expenses       = exp.data;
   if (ftpl.data) state.fixedTemplates = ftpl.data;
   if (meal.data) state.meals          = meal.data;
+  if (setl.data) state.settlements    = setl.data;
   if (w.data) {
     state.workers = w.data.map(r => r['姓名'] || '').filter(Boolean);
     state.workerRates = {};
@@ -2827,7 +2832,14 @@ function renderWorkerFeePending() {
   // 名單 = 有待付傭金 ∪ 有本月餐費 ∪ 有本月薪水
   const names = new Set([...Object.keys(byWorker), ...Object.keys(mealByWorker).filter(Boolean)]);
   (state.workers || []).forEach(w => { if (salaryForMonth(w, mStart, mEnd).amount > 0) names.add(w); });
-  if (!names.size) return '<p class="text-gray-500 text-sm mb-4">無待支付</p>';
+
+  // 已結算（該師傅該月已結清）→ 從待支付移除，薪資/餐費一併歸零
+  const ym = String(mStart).slice(0, 7);
+  const settledNames = new Set((state.settlements || [])
+    .filter(s => String(s['月份']||'').slice(0,7) === ym)
+    .map(s => String(s['姓名']||'').trim()));
+  settledNames.forEach(n => names.delete(n));
+  if (!names.size) return '<p class="text-gray-500 text-sm mb-4">本月皆已結算</p>';
 
   return Array.from(names).map((name, idx) => {
     const items = byWorker[name] || [];
@@ -2928,8 +2940,9 @@ async function saveWorkerSalary(name, el) {
 }
 
 function renderWorkerFeePaid(from, to) {
+  // 已支付以「完工月份」歸類（非付款月）
   const paid = state.items.filter(it => {
-    const d = it['費用支付日期'] || '';
+    const d = it['完工日期'] || '';
     return it['費用支付狀態'] === '已支付' && (!from || (d >= from && d <= to));
   });
   if (!paid.length) return '<p class="text-gray-500 text-sm mb-4">無已支付費用</p>';
@@ -2947,7 +2960,7 @@ function renderWorkerFeePaid(from, to) {
       const label = it['費用類型'] === '接單' ? `接單返還 −$${returnAmt(it).toLocaleString()}` : `$${amt.toLocaleString()}`;
       return `
       <div class="flex justify-between text-sm py-1 border-b border-gray-700">
-        <span class="text-gray-300">${it['費用支付日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
+        <span class="text-gray-300">${it['完工日期']||''} · ${it['客戶']||''} · ${it['品名']||''}</span>
         <span class="${amt < 0 ? 'text-emerald-400' : 'text-amber-400'} shrink-0 ml-2">${label}</span>
       </div>`;
     }).join('');
@@ -2979,16 +2992,16 @@ function renderProfitReport(from, to) {
   ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const revenue = incomeItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
 
-  // ── 接單返還（已收回）：接單 已支付，公司實得的分潤 ──
+  // ── 接單返還（已收回）：接單 已支付，成本以完工月份歸類（非付款月）──
   const referralPaid = state.items.filter(it =>
-    it['費用類型'] === '接單' && it['費用支付狀態'] === '已支付' && inRange(it['費用支付日期'])
-  ).sort((a, b) => (a['費用支付日期'] > b['費用支付日期'] ? -1 : 1));
+    it['費用類型'] === '接單' && it['費用支付狀態'] === '已支付' && inRange(it['完工日期'])
+  ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const referralIncome = referralPaid.reduce((s, it) => s + returnAmt(it), 0);
 
-  // ── 人員費用：已支付的傭金/抽成（不含接單）──
+  // ── 人員費用：已支付的傭金/抽成（不含接單），以完工月份歸類 ──
   const feeItems = state.items.filter(it =>
-    it['費用類型'] && it['費用類型'] !== '接單' && it['費用支付狀態'] === '已支付' && inRange(it['費用支付日期'])
-  ).sort((a, b) => (a['費用支付日期'] > b['費用支付日期'] ? -1 : 1));
+    it['費用類型'] && it['費用類型'] !== '接單' && it['費用支付狀態'] === '已支付' && inRange(it['完工日期'])
+  ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const totalFees = feeItems.reduce((s, it) => s + commissionAmt(it), 0);
 
   // ── 公司支出 ──
@@ -3022,11 +3035,11 @@ function renderProfitReport(from, to) {
   ).join('') || '<p class="text-xs text-gray-500 py-1">無完工收入</p>';
 
   const referralRows = referralPaid.map(it =>
-    rowLine(`${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}`, `+$${returnAmt(it).toLocaleString()}`, 'text-emerald-400')
+    rowLine(`${it['完工日期']||''} · ${it['負責師傅']||''} · ${it['品名']||''}`, `+$${returnAmt(it).toLocaleString()}`, 'text-emerald-400')
   ).join('') || '<p class="text-xs text-gray-500 py-1">無已收回接單返還</p>';
 
   const feeRows = feeItems.map(it =>
-    rowLine(`${it['費用支付日期']} · ${it['負責師傅']||''} · ${it['品名']||''}`, `$${commissionAmt(it).toLocaleString()}`, 'text-red-400')
+    rowLine(`${it['完工日期']||''} · ${it['負責師傅']||''} · ${it['品名']||''}`, `$${commissionAmt(it).toLocaleString()}`, 'text-red-400')
   ).join('') || '<p class="text-xs text-gray-500 py-1">無已支付人員費用</p>';
 
   const expRows = expItems.map(e => `
@@ -3135,8 +3148,14 @@ async function settleWorker(name, btn) {
       if (data['返還金額'] != null) it['返還金額'] = data['返還金額'];
     }
   }
+  // 2) 記一筆結算記錄（該月該師傅已結清 → 待支付移除、薪資/餐費一併歸零）
+  const sFromEl = document.getElementById('s_from');
+  const ym = String((sFromEl && sFromEl.value) || monthRange(0).start).slice(0, 7);
+  const setlRow = { '結算ID': 'S' + Date.now(), '月份': ym, '姓名': name, '傭金': pend, '薪水': sal, '餐費': meal, '實付': net, '結算日期': today, '結算人': currentUserName() };
+  state.settlements.push(setlRow);
+  await api('add', '結算記錄', { data: setlRow });
   saveCache();
-  // 2) Gmail 通知本人
+  // 3) Gmail 通知本人
   const detail = `傭金/抽成 $${pend.toLocaleString()}　薪水 $${sal.toLocaleString()}　餐費 −$${meal.toLocaleString()}`;
   const r = await api('notifyPayout', null, { name, amount: net, detail });
   if (r && r.success) {
