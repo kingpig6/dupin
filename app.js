@@ -708,7 +708,7 @@ async function cycleProgress(itemId, newProg) {
 
   // 前端也自動填完工日期（後端亦會填，確保一致）
   if (newProg === '完成' && !it['完工日期']) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     it['完工日期'] = today;
     data['完工日期'] = today;
   }
@@ -945,7 +945,7 @@ async function confirmDuplicate(id, btn) {
     '工作ID':       'W' + (base + i).toString(),
     '訂單編號':     src['訂單編號'] || '',
     '客戶':         src['客戶'] || '',
-    '開單日期':     new Date().toISOString().slice(0, 10),
+    '開單日期':     todayStr(),
     '品名':         src['品名'] || '',
     '規格':         src['規格'] || '',
     '數量':         src['數量'] || 1,
@@ -1219,7 +1219,7 @@ async function openWorkOrder(itemIds) {
 
 // ── 新增工作（開單）─────────────────────────
 function renderNewOrder() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const cusOptions = state.customers.map(c =>
     `<option value="${c['客戶名稱']}" ${state.viewCustomer === c['客戶名稱'] ? 'selected' : ''}>${c['客戶名稱']}</option>`
   ).join('');
@@ -1393,7 +1393,7 @@ function onFeeTypeChange(idx) {
 }
 
 function generateOrderNo() {
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const today = todayStr().replace(/-/g,'');
   const existing = [...new Set(state.items
     .filter(it => (it['訂單編號']||'').startsWith(today))
     .map(it => it['訂單編號']))];
@@ -1954,7 +1954,7 @@ function renderStats() {
     </button>
     <div class="hidden mt-3 flex flex-col gap-2">
       <div class="grid grid-cols-2 gap-2">
-        <input id="exp_date" type="date" value="${new Date().toISOString().slice(0,10)}"/>
+        <input id="exp_date" type="date" value="${todayStr()}"/>
         <select id="exp_cat">
           <option>固定支出</option><option>耗材</option><option>外包</option><option>薪資</option><option>設備</option><option>其他</option>
         </select>
@@ -2110,7 +2110,9 @@ function monthRange(offset) {
   const now = new Date();
   const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
   const last  = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
-  const toIso = d => d.toISOString().slice(0, 10);
+  // 用本地日期組字串，避免 toISOString() 轉 UTC 造成 UTC+8 少一天
+  const p = n => String(n).padStart(2, '0');
+  const toIso = d => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   return { start: toIso(first), end: toIso(last) };
 }
 
@@ -2390,6 +2392,8 @@ function renderMyCommission() {
 // ── 餐飲記錄（外賣墊付，大家共用）─────────────
 function currentUserName() { return (auth && auth.name) ? auth.name : ''; }
 function nowStamp() { const d = new Date(); const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+// 今天日期（本地，避免 toISOString UTC 少一天）
+function todayStr() { const d = new Date(); const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 // 本機先記上最後修改人/時間（伺服器也會蓋，重新整理拿到正式值）
 function stampLocalModify(it) { if (it) { it['最後修改人'] = currentUserName(); it['最後修改時間'] = nowStamp(); } }
 
@@ -2479,7 +2483,7 @@ function renderMealsBody(from, to) {
       </button>
       <div id="mealAddPanel" class="hidden mt-3 flex flex-col gap-2">
         <div class="grid grid-cols-2 gap-2">
-          <input id="meal_date" type="date" value="${new Date().toISOString().slice(0,10)}"/>
+          <input id="meal_date" type="date" value="${todayStr()}"/>
           <input id="meal_content" placeholder="店家/內容（選填）"/>
         </div>
         <input id="meal_note" placeholder="備註（選填）"/>
@@ -3109,7 +3113,7 @@ async function confirmPayWorker(name, ids, btn) {
   }
   btn.disabled = true;
   btn.textContent = '支付中…';
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   for (const id of ids) {
     const it = state.items.find(x => String(x['工作ID']) === String(id));
     // 結算時把即時算出的抽成/返還金額寫回試算表，確保帳面一致
