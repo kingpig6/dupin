@@ -334,6 +334,7 @@ function render() {
       actions.innerHTML = '';
       if (!isAdmin()) adminCommissionWorker = null;
       app.innerHTML = isAdmin() ? renderStats() : renderMyCommission();
+      if (isAdmin()) requestAnimationFrame(queryStats); // 進頁自動查本月
       if (!isAdmin()) requestAnimationFrame(startCommissionAnimations);
       break;
   }
@@ -1979,16 +1980,17 @@ function renderStats() {
 
   <div class="card mb-4">
     <div class="section-title">自訂查詢</div>
+    <div class="mb-2">
+      <label class="text-xs text-gray-400">快速選月份</label>
+      <select id="s_month" onchange="setQueryMonth(this.value)">
+        ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===(new Date().getMonth()+1)?'selected':''}>${new Date().getFullYear()} 年 ${m} 月</option>`).join('')}
+      </select>
+    </div>
     <div class="flex items-end gap-2 mb-2">
       <div class="flex-1"><label class="text-xs text-gray-400">起始日</label>
         <input id="s_from" type="date" value="${mFrom}"/></div>
       <div class="flex-1"><label class="text-xs text-gray-400">結束日</label>
         <input id="s_to" type="date" value="${mTo}"/></div>
-      <div class="shrink-0"><label class="text-xs text-gray-400">查詢月份</label>
-        <select id="s_month" onchange="setQueryMonth(this.value)" style="height:38px">
-          ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===(new Date().getMonth()+1)?'selected':''}>${m} 月</option>`).join('')}
-        </select>
-      </div>
     </div>
     <select id="s_cus" class="mb-3">
       <option value="">全部客戶</option>
