@@ -2790,16 +2790,20 @@ function renderStatsByWorker(from, to) {
 }
 
 function renderWorkerFeePending() {
-  const { start: mStart, end: mEnd } = monthRange(0);
+  // 薪水/餐費的計算期間：跟「自訂查詢」日期共用；沒有就用本月
+  const { start: dmStart, end: dmEnd } = monthRange(0);
+  const sFromEl = document.getElementById('s_from'), sToEl = document.getElementById('s_to');
+  const mStart = (sFromEl && sFromEl.value) || dmStart;
+  const mEnd   = (sToEl && sToEl.value)   || dmEnd;
 
-  // 傭金/抽成待付：依師傅分組
+  // 傭金/抽成待付：依師傅分組（未支付一律列入，不受日期限制）
   const pending = state.items.filter(it =>
     it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && it['費用類型'] && bossPayable(it) !== 0
   );
   const byWorker = {};
   pending.forEach(it => { const w = it['負責師傅'] || '(未指定)'; (byWorker[w] = byWorker[w] || []).push(it); });
 
-  // 本月餐費：依用餐人分組
+  // 期間餐費：依用餐人分組
   const mealByWorker = {};
   state.meals.forEach(m => {
     const d = String(m['日期']||'').slice(0,10);
@@ -2848,7 +2852,7 @@ function renderWorkerFeePending() {
         <div class="text-xs text-gray-500 mb-1">傭金/抽成待付</div>
         ${commRows}
         <div class="flex justify-between items-center text-sm py-2 border-b border-gray-700">
-          <span class="text-gray-300">本月薪水${salInfo.recorded ? '' : '（預估，可改）'}</span>
+          <span class="text-gray-300">薪水${salInfo.recorded ? '' : '（預估，可改）'}</span>
           <div class="flex items-center gap-1">
             <span class="text-emerald-400">＋$</span>
             <input type="number" value="${salary}" data-pend="${pendComm}" data-meal="${meal}"
@@ -2857,7 +2861,7 @@ function renderWorkerFeePending() {
           </div>
         </div>
         <div class="flex justify-between items-center text-sm py-2 border-b border-gray-700">
-          <span class="text-gray-300">本月餐費（公司墊付扣回）</span>
+          <span class="text-gray-300">餐費（公司墊付扣回）</span>
           <span class="text-red-400">−$${meal.toLocaleString()}</span>
         </div>
         <div class="flex justify-between items-center pt-2">
@@ -2887,7 +2891,8 @@ function updatePendingNet(idx, el) {
 // 修改某師傅本月薪水（因請假等）：寫回本月支出記錄（鎖定該月、損益同步）
 async function saveWorkerSalary(name, el) {
   const amount = Number(el.value) || 0;
-  const { start } = monthRange(0);
+  const sFromEl = document.getElementById('s_from');
+  const start = (sFromEl && sFromEl.value) || monthRange(0).start;
   const ym = start.slice(0, 7);
   const isSalaryCat = c => c === '固定支出' || c === '薪資';
   const existing = (state.expenses || []).find(e =>
@@ -3218,6 +3223,8 @@ function queryStats() {
   if (paidEl && !paidEl.classList.contains('hidden')) paidEl.innerHTML = renderWorkerFeePaid(from, to);
   const mealsEl = document.getElementById('mealsSection');
   if (mealsEl && !mealsEl.classList.contains('hidden')) renderMealsBody();
+  const wpEl = document.getElementById('workerFeePending');
+  if (wpEl && !wpEl.classList.contains('hidden')) wpEl.innerHTML = renderWorkerFeePending();
 }
 
 // ── 工具函式 ────────────────────────────────
