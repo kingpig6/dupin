@@ -2714,7 +2714,7 @@ function queryMyCommission() {
         <span class="text-2xl font-bold text-amber-400">$${net.toLocaleString()}</span>
       </div>
       <div class="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
-        <span class="text-xs text-gray-400">實際收入（含接單自收，餐費由公司墊付不計）</span>
+        <span class="text-xs text-gray-400">實際收入（含接單自收，餐費）</span>
         <span class="text-sm font-semibold text-gray-300">$${income.toLocaleString()}</span>
       </div>
       <div class="flex justify-between text-sm py-1"><span class="text-gray-300">傭金/抽成／接單（${items.length} 件）</span><span class="${commTotal<0?'text-red-400':'text-amber-400'}">$${commTotal.toLocaleString()}</span></div>
