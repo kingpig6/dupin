@@ -2882,9 +2882,10 @@ function renderWorkerFeePending() {
           <span class="font-bold">實付</span>
           <span class="text-xl font-bold ${netColor(net)}" id="pendNet_${idx}">${netLabel(net)}</span>
         </div>
-        ${items.length ? `<button class="btn btn-primary w-full mt-3"
-          onclick="confirmPayWorker('${name.replace(/'/g,"\\'")}', JSON.parse(this.dataset.ids), this)"
-          data-ids="${idsJson}">結算傭金/抽成（${items.length} 件）</button>` : ''}
+        <button class="btn btn-primary w-full mt-3"
+          onclick="settleWorker('${name.replace(/'/g,"\\'")}', this)"
+          data-ids="${idsJson}" data-net="${net}"
+          data-pend="${pendComm}" data-sal="${salary}" data-meal="${meal}">結算並通知（實付 ${netLabel(net)}）</button>
       </div>
     </div>`;
   }).join('');
@@ -3095,37 +3096,37 @@ function renderProfitReport(from, to) {
   </div>`;
 }
 
-async function confirmPayWorker(name, ids, btn) {
+// 結算一位師傅：結算傭金/抽成項目 + 寄 Gmail 通知本人（含明細）
+async function settleWorker(name, btn) {
   if (btn.dataset.confirmed !== '1') {
     if (!btn.dataset.orig) btn.dataset.orig = btn.textContent;
     btn.dataset.confirmed = '1';
-    btn.textContent = '確定？再按一次';
-    btn.classList.remove('bg-blue-600');
+    btn.textContent = '確定結算並通知？再按一次';
     btn.classList.add('bg-amber-600');
     setTimeout(() => {
       if (btn.dataset.confirmed === '1') {
         btn.dataset.confirmed = '';
-        btn.textContent = btn.dataset.orig || '支付全部';
+        btn.textContent = btn.dataset.orig || '結算並通知';
         btn.classList.remove('bg-amber-600');
       }
     }, 3000);
     return;
   }
+  const ids  = JSON.parse(btn.dataset.ids || '[]');
+  const net  = Number(btn.dataset.net || 0);
+  const pend = Number(btn.dataset.pend || 0);
+  const sal  = Number(btn.dataset.sal || 0);
+  const meal = Number(btn.dataset.meal || 0);
   btn.disabled = true;
-  btn.textContent = '支付中…';
+  btn.textContent = '結算中…';
   const today = todayStr();
+  // 1) 結算傭金/抽成項目
   for (const id of ids) {
     const it = state.items.find(x => String(x['工作ID']) === String(id));
-    // 結算時把即時算出的抽成/返還金額寫回試算表，確保帳面一致
     const data = { '費用支付狀態': '已支付', '費用支付日期': today };
     if (it) {
-      if (it['費用類型'] === '接單') {
-        data['費用金額'] = referralIncome(it);
-        data['返還金額'] = returnAmt(it);
-      } else {
-        const c = commissionAmt(it);
-        if (c > 0) data['費用金額'] = c;
-      }
+      if (it['費用類型'] === '接單') { data['費用金額'] = referralIncome(it); data['返還金額'] = returnAmt(it); }
+      else { const c = commissionAmt(it); if (c > 0) data['費用金額'] = c; }
     }
     await api('update', '工作項目', { key: id, data });
     if (it) {
@@ -3135,7 +3136,15 @@ async function confirmPayWorker(name, ids, btn) {
     }
   }
   saveCache();
-  showToast(`已支付 ${name} 費用 ✓`);
+  // 2) Gmail 通知本人
+  const detail = `傭金/抽成 $${pend.toLocaleString()}　薪水 $${sal.toLocaleString()}　餐費 −$${meal.toLocaleString()}`;
+  const r = await api('notifyPayout', null, { name, amount: net, detail });
+  if (r && r.success) {
+    if (r.sent) showToast(`已結算並寄通知給 ${name} ✓`);
+    else showToast(`已結算 ✓（${name} 未設定 email，未寄通知）`, 'error');
+  } else {
+    showToast(`已結算 ✓（通知寄送失敗）`, 'error');
+  }
   const pendingEl = document.getElementById('workerFeePending');
   if (pendingEl && !pendingEl.classList.contains('hidden')) pendingEl.innerHTML = renderWorkerFeePending();
   const paidEl = document.getElementById('workerFeePaid');

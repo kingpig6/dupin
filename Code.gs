@@ -86,12 +86,13 @@ function handleRequest(e) {
     // 啟用權限控管後：所有寫入/敏感操作需要有效登入與足夠權限
     if (clientId) {
       const role = roleInfo ? roleInfo.role : null;
-      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto','addFixedExpense'];
+      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto','addFixedExpense','notifyPayout'];
       if (writeActions.indexOf(action) >= 0) {
         if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
         if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
-        // 僅 admin：刪除、開請款單（員工可新增與修改工作項目，但不可刪除）
+        // 僅 admin：刪除、開請款單、結算通知
         if (action === 'delete' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
+        if (action === 'notifyPayout' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         if (action === 'generateInvoice' && body.type === 'invoice' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         // 員工（非 admin）開單時，負責師傅只能填自己或留空，避免指派給別人
         if (sheet === '工作項目' && role !== 'admin') {
@@ -133,6 +134,7 @@ function handleRequest(e) {
       case 'saveSettings':    result = saveSettings(body.data); break;
       case 'generateInvoice': result = generateInvoicePDF(body.itemIds, body.type); break;
       case 'getPDFUrl':       result = getPDFUrl(body.itemId, body.type); break;
+      case 'notifyPayout':    result = notifyPayout(body.name, body.amount, body.detail); break;
       case 'uploadItemPhoto': result = uploadItemPhoto(body.itemId, body.base64, body.fileName); break;
       case 'uploadRefPhoto':  result = uploadRefPhoto(body.itemId, body.base64, body.fileName);  break;
       case 'parseVoice':      result = parseVoiceWithAI(body.text, body.customers); break;
@@ -203,6 +205,29 @@ function verifySession(token) {
 }
 function sessionNearExpiry(sess) {
   return sess && sess.exp && (sess.exp * 1000 - Date.now() < SESSION_RENEW_WITHIN_MS);
+}
+
+// ── 結算通知：依姓名查 email，寄 Gmail 給該員工 ──
+function notifyPayout(name, amount, detail) {
+  var sheet = ss.getSheetByName('員工');
+  if (!sheet) return { error: '找不到員工表' };
+  var rows = sheet.getDataRange().getValues();  // email | 姓名 | 角色 ...
+  var email = '';
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][1]).trim() === String(name).trim()) { email = String(rows[i][0]).trim(); break; }
+  }
+  if (!email) return { success: true, sent: false, reason: 'no_email' };
+  var amt = Number(amount) || 0;
+  var subject = '獨品工坊 · 結算通知';
+  var body = name + ' 你好：\n\n本次結算實付金額：$' + amt.toLocaleString() + '\n' +
+             (detail ? ('明細：' + detail + '\n') : '') +
+             '\n如有疑問請與老闆確認。\n— 獨品工坊';
+  try {
+    MailApp.sendEmail(email, subject, body);
+    return { success: true, sent: true, email: email };
+  } catch (e) {
+    return { success: true, sent: false, reason: String(e) };
+  }
 }
 
 // ── 除錯用：本地解碼 JWT 並回傳比對結果（上線後可移除）──
