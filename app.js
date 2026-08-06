@@ -441,7 +441,7 @@ function toggleSection(key) {
 function renderOrders() {
   return `
   <div class="relative mb-3">
-    <input type="search" placeholder="搜尋客戶、品名、車號、師傅…"
+    <input type="search" placeholder="搜尋客戶、品名、類型、師傅…"
       value="${state.search}"
       oninput="state.search=this.value;document.getElementById('orderListContent').innerHTML=renderOrdersContent()"
       class="w-full pl-9 pr-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500"/>
@@ -681,6 +681,11 @@ function renderCustomerDetail() {
     const feeChip = feeType
       ? `<span class="text-xs px-1.5 py-0.5 rounded ${feeType==='接單'?'bg-teal-800 text-teal-200':(feeType==='傭金'?'bg-indigo-900 text-indigo-200':'bg-amber-900 text-amber-200')}">${feeType}</span>`
       : '';
+    // 訂購類型（客訂／現貨）沿用「車號」欄位儲存；只在為客訂／現貨時顯示於品名最前方
+    const orderType = it['車號'] || '';
+    const typeChip = (orderType === '客訂' || orderType === '現貨')
+      ? `<span class="text-xs px-1.5 py-0.5 rounded font-semibold ${orderType==='客訂'?'bg-rose-900 text-rose-200':'bg-sky-900 text-sky-200'}">${orderType}</span>`
+      : '';
     return `
     <div class="card" id="itemCard_${it['工作ID']}">
       <div class="flex justify-between items-start">
@@ -694,10 +699,9 @@ function renderCustomerDetail() {
         </label>` : ''}
         <div class="flex-1 min-w-0">
           ${worker ? `<div class="text-xs text-amber-400 font-semibold">${it['客戶'] || ''}</div>` : ''}
-          <div class="font-semibold flex items-center gap-1.5">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}${feeChip}</div>
+          <div class="font-semibold flex items-center gap-1.5">${typeChip}${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}${feeChip}</div>
           <div class="text-xs text-gray-400 mb-1">
             ${it['數量']} × $${Number(it['單價']).toLocaleString()}
-            ${it['車號'] ? ' · ' + it['車號'] : ''}
             ${it['負責師傅'] ? ' · ' + it['負責師傅'] : ''}
           </div>
           <div class="text-xs text-gray-500 mb-1">
@@ -870,7 +874,11 @@ function editItem(id) {
         oninput="document.getElementById('ei_amt').textContent='$'+((this.value||0)*(document.getElementById('ei_price').value||0)).toLocaleString();onEditFeeTypeChange()"/>
       <input id="ei_price" value="${it['單價']||''}"       type="number" placeholder="單價"
         oninput="document.getElementById('ei_amt').textContent='$'+((document.getElementById('ei_qty').value||1)*this.value).toLocaleString();onEditFeeTypeChange()"/>
-      <input id="ei_plate"  value="${it['車號']||''}"      placeholder="車號（選填）"/>
+      <select id="ei_type">
+        <option value="" ${!['客訂','現貨'].includes(it['車號'])?'selected':''}>訂購類型（選填）</option>
+        <option value="客訂" ${it['車號']==='客訂'?'selected':''}>客訂</option>
+        <option value="現貨" ${it['車號']==='現貨'?'selected':''}>現貨</option>
+      </select>
       <select id="ei_worker" onchange="onEditFeeTypeChange()">
         <option value="">負責師傅（選填）</option>
         ${state.workers.map(w => `<option value="${w}" ${it['負責師傅']===w?'selected':''}>${w}</option>`).join('')}
@@ -947,7 +955,7 @@ async function saveItem(id, btn) {
     '單價':     price,
     '金額':     qty * price,
     '交貨期限': document.getElementById('ei_deadline').value,
-    '車號':     document.getElementById('ei_plate').value.trim(),
+    '車號':     document.getElementById('ei_type').value,  // 沿用「車號」欄位儲存訂購類型（客訂／現貨）
     '負責師傅': document.getElementById('ei_worker').value.trim(),
     '費用類型': document.getElementById('ei_fee_type').value,
     '費用金額': Number(document.getElementById('ei_fee_amt').value) || 0,
@@ -1402,7 +1410,11 @@ function renderItemRow(idx) {
       <input placeholder="單價" type="number" id="r${idx}_price" oninput="calcRowAmount(${idx})"/>
     </div>
     <div class="grid grid-cols-2 gap-2 mb-2">
-      <input placeholder="車號（選填）" id="r${idx}_plate"/>
+      <select id="r${idx}_type">
+        <option value="">訂購類型（選填）</option>
+        <option value="客訂">客訂</option>
+        <option value="現貨">現貨</option>
+      </select>
       <select id="r${idx}_worker" onchange="onFeeTypeChange(${idx})">
         <option value="">負責師傅（選填）</option>
         ${workerOptions().map(w => `<option value="${w}">${w}</option>`).join('')}
@@ -1559,7 +1571,7 @@ async function saveNewItems(btn) {
       '單價':     price,
       '金額':     qty * price,
       '交貨期限': document.getElementById(`r${idx}_deadline`)?.value        || '',
-      '車號':     document.getElementById(`r${idx}_plate`)?.value.trim()    || '',
+      '車號':     document.getElementById(`r${idx}_type`)?.value           || '',  // 沿用「車號」欄位儲存訂購類型
       '負責師傅': document.getElementById(`r${idx}_worker`)?.value.trim()   || '',
       '費用類型':     document.getElementById(`r${idx}_fee_type`)?.value        || '',
       '費用金額':     Number(document.getElementById(`r${idx}_fee_amt`)?.value) || 0,
@@ -1710,8 +1722,8 @@ function parseVoiceLocalFill(text) {
   if (qtyMatch) { const qty = toNum(qtyMatch[1]); const el = document.getElementById(`r${row}_qty`); if (el && qty) { el.value = qty; calcRowAmount(row); } }
   const priceMatch = text.match(/(?:單價|每[個件台])?[＄$]?(\d[\d,]*|\d+[萬千百]?\d*)\s*[元塊錢萬千]/);
   if (priceMatch) { const price = toNum(priceMatch[1].replace(/萬/,'0000').replace(/千/,'000').replace(/百/,'00')); const el = document.getElementById(`r${row}_price`); if (el && price) { el.value = price; calcRowAmount(row); } }
-  const plateMatch = text.match(/[A-Z]{1,3}[-\s]?\d{3,4}|\d{3,4}[-\s]?[A-Z]{1,3}/i);
-  if (plateMatch) { const el = document.getElementById(`r${row}_plate`); if (el) el.value = plateMatch[0].toUpperCase(); }
+  const typeMatch = text.match(/客訂|現貨/);
+  if (typeMatch) { const el = document.getElementById(`r${row}_type`); if (el) el.value = typeMatch[0]; }
   showToast('語音已解析，AI 解析中…');
 }
 
@@ -1753,7 +1765,7 @@ async function parseVoiceWithAI(text) {
         if (item.spec)   document.getElementById(`r${idx}_spec`).value     = item.spec;
         if (item.qty)    document.getElementById(`r${idx}_qty`).value      = item.qty;
         if (item.price)  document.getElementById(`r${idx}_price`).value    = item.price;
-        if (item.plate)  document.getElementById(`r${idx}_plate`).value    = item.plate;
+        { const t = item.orderType || item.plate; if (['客訂','現貨'].includes(t)) { const el = document.getElementById(`r${idx}_type`); if (el) el.value = t; } }
         if (item.worker) document.getElementById(`r${idx}_worker`).value   = item.worker;
         if (item.note)   document.getElementById(`r${idx}_note`).value     = item.note;
         if (d.deadline)  document.getElementById(`r${idx}_deadline`).value = d.deadline;
@@ -1809,7 +1821,7 @@ async function parseTextOrder() {
         if (item.spec)   document.getElementById(`r${idx}_spec`).value     = item.spec;
         if (item.qty)    document.getElementById(`r${idx}_qty`).value      = item.qty  || 1;
         if (item.price)  document.getElementById(`r${idx}_price`).value    = item.price || '';
-        if (item.plate)  document.getElementById(`r${idx}_plate`).value    = item.plate || '';
+        { const t = item.orderType || item.plate; if (['客訂','現貨'].includes(t)) { const el = document.getElementById(`r${idx}_type`); if (el) el.value = t; } }
         if (item.worker) document.getElementById(`r${idx}_worker`).value   = item.worker || '';
         if (item.note)   document.getElementById(`r${idx}_note`).value     = item.note  || '';
         if (d.deadline)  document.getElementById(`r${idx}_deadline`).value = d.deadline;

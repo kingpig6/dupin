@@ -621,7 +621,7 @@ function generateInvoicePDF(itemIds, type) {
   const taxRate  = Number(cfg['稅率'] || 0);
   const total    = subtotal * (1 + taxRate);
 
-  const extraHeaders = type === 'work' ? '<th>車號</th><th>負責師傅</th>' : '';
+  const extraHeaders = type === 'work' ? '<th>類型</th><th>負責師傅</th>' : '';
   const itemRowsHtml = items.map(it => `
     <tr>
       <td>${it['品名']||''}</td><td>${it['規格']||''}</td>
@@ -1071,7 +1071,7 @@ function parseVoiceWithAI(text, customers) {
       "spec": "規格",
       "qty": 數量數字,
       "price": 單價數字,
-      "plate": "車號",
+      "orderType": "訂購類型（僅限「客訂」或「現貨」，未提及則留空）",
       "worker": "負責師傅",
       "note": "備註"
     }
@@ -1136,7 +1136,7 @@ ${text}
       "spec": "規格（如：M/L、XL、白色等）",
       "qty": 數量數字,
       "price": 單價數字（若未提及則為0）,
-      "plate": "車號（若有）",
+      "orderType": "訂購類型（僅限「客訂」或「現貨」，若有提及）",
       "worker": "負責師傅（若有）",
       "note": "備註（完整保留客戶的特殊要求、交貨方式、寄件注意事項等，包含日期資訊）"
     }
