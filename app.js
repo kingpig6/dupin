@@ -49,15 +49,37 @@ const API_SECRET = 'dupin2026';
 const TOKEN_REFRESH_MAX_ATTEMPTS = 3;
 const TOKEN_REFRESH_RETRY_DELAY_MS = 1500;
 
+// 網路層自動重試：Apps Script 偶爾會轉址逾時／回非 2xx，
+// 一次抖動不該直接判定失敗。僅對「讀取」類請求重試（重試寫入可能造成重複寫）。
+const NET_RETRY_MAX_ATTEMPTS = 3;
+const NET_RETRY_BASE_DELAY_MS = 800;
+
+// loadAll 批次載入時暫時關掉單支請求的錯誤 toast，改由 loadAll 統一提示一次
+let _suppressApiToast = false;
+
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-function postApi(payload) {
-  return fetch(API_URL, {
-    method: 'POST',
-    redirect: 'follow',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(payload),
-  }).then(res => res.json());
+function postApi(payload, retry = false) {
+  const maxAttempts = retry ? NET_RETRY_MAX_ATTEMPTS : 1;
+  const attempt = (n) =>
+    fetch(API_URL, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload),
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .catch(err => {
+        // fetch 被拒（斷線）、轉址逾時或非 2xx：退避後重試
+        if (n < maxAttempts) {
+          return sleep(NET_RETRY_BASE_DELAY_MS * Math.pow(2, n - 1)).then(() => attempt(n + 1));
+        }
+        throw err;
+      });
+  return attempt(1);
 }
 
 function isAuthError(data) {
@@ -72,12 +94,12 @@ function captureSession(data) {
   }
 }
 
-async function api(action, sheet, extra = {}) {
+async function api(action, sheet, extra = {}, opts = {}) {
   const payload = { action, sheet, secret: API_SECRET, ...extra };
   if (auth.sessionToken) payload.sessionToken = auth.sessionToken;
   if (auth.idToken)      payload.idToken = auth.idToken;
   try {
-    let data = await postApi(payload);
+    let data = await postApi(payload, opts.retry);
     captureSession(data);
 
     // 只有在「沒有長效 session」的過渡狀態才退回 Google 靜默刷新重試
@@ -85,7 +107,7 @@ async function api(action, sheet, extra = {}) {
     while (isAuthError(data) && !auth.sessionToken && attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
       attempts++;
       const refreshed = await silentTokenRefresh();
-      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload); captureSession(data); }
+      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload, opts.retry); captureSession(data); }
       else if (attempts < TOKEN_REFRESH_MAX_ATTEMPTS) await sleep(TOKEN_REFRESH_RETRY_DELAY_MS);
     }
 
@@ -99,31 +121,37 @@ async function api(action, sheet, extra = {}) {
     }
     return data;
   } catch (e) {
-    showToast('網路錯誤，請確認 API_URL 已設定', 'error');
-    return { error: e.message };
+    // 網路層失敗：批次載入時交由 loadAll 統一提示，避免一次噴出一排紅字
+    if (!opts.silent && !_suppressApiToast) showToast('網路連線失敗，請稍後再試', 'error');
+    return { error: e.message, _netError: true };
   }
 }
 
 let _silentRefreshResolve = null;
+let _silentRefreshPromise = null;
 
 function silentTokenRefresh() {
-  return new Promise(resolve => {
+  // 多支 api 並發（loadAll 一次 8 支）時共用同一次刷新，
+  // 避免同時多次呼叫 prompt()／互相覆蓋 _silentRefreshResolve 造成 FedCM AbortError 與卡死
+  if (_silentRefreshPromise) return _silentRefreshPromise;
+  _silentRefreshPromise = new Promise(resolve => {
     if (!window.google || !google.accounts || !GOOGLE_CLIENT_ID) { resolve(false); return; }
-    const timeout = setTimeout(() => { _silentRefreshResolve = null; resolve(false); }, 5000);
-    // 不重新 initialize（避免 FedCM AbortError），讓 handleCredentialResponse 接收新 token
-    _silentRefreshResolve = () => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
       clearTimeout(timeout);
       _silentRefreshResolve = null;
-      resolve(true);
+      resolve(ok);
     };
+    const timeout = setTimeout(() => finish(false), 5000);
+    // 不重新 initialize（避免 FedCM AbortError），讓 handleCredentialResponse 接收新 token
+    _silentRefreshResolve = () => finish(true);
     google.accounts.id.prompt(notification => {
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-        clearTimeout(timeout);
-        _silentRefreshResolve = null;
-        resolve(false);
-      }
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()) finish(false);
     });
-  });
+  }).finally(() => { _silentRefreshPromise = null; });
+  return _silentRefreshPromise;
 }
 
 // 排程下一次靜默刷新；不管上一次成功或失敗都要繼續排，避免刷新鏈中斷後就再也不會自動恢復
@@ -136,9 +164,42 @@ function scheduleTokenRefresh() {
   }, 50 * 60 * 1000); // 50 分鐘後靜默刷新（token 1 小時到期前）
 }
 
-// ── 離線偵測 ────────────────────────────────
-window.addEventListener('online',  () => showToast('網路已恢復 ✓'));
+// ── 離線偵測 & 自動刷新 ──────────────────────
+const BACKGROUND_REFRESH_MS = 60 * 1000;      // 每 60 秒背景靜默刷新
+const FOREGROUND_REFRESH_THROTTLE_MS = 5000;  // 回到前景 5 秒內不重複抓
+let _lastRefreshAt = 0;
+
+// 只有已真正進入系統（無登入模式，或已登入）才自動刷新
+function _canRefresh() {
+  return API_URL !== 'YOUR_APPS_SCRIPT_URL_HERE'
+    && (!GOOGLE_CLIENT_ID || !!auth.email)
+    && navigator.onLine !== false;
+}
+
+// 背景靜默刷新：不動 loading 遮罩、不噴 toast，只把最新資料換上畫面
+function backgroundRefresh(force) {
+  if (!_canRefresh()) return;
+  const now = Date.now();
+  if (!force && now - _lastRefreshAt < FOREGROUND_REFRESH_THROTTLE_MS) return;
+  loadAll({ background: true });
+}
+
+function startAutoRefresh() {
+  clearInterval(window._autoRefreshTimer);
+  window._autoRefreshTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') backgroundRefresh(false);
+  }, BACKGROUND_REFRESH_MS);
+}
+
+window.addEventListener('online',  () => { showToast('網路已恢復 ✓'); backgroundRefresh(true); });
 window.addEventListener('offline', () => showToast('目前離線，操作可能不會儲存', 'error'));
+// 回到前景（切回 App／解鎖手機）就刷新，解決「員工頁面資料沒有馬上更新」
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') backgroundRefresh(false);
+});
+window.addEventListener('focus', () => backgroundRefresh(false));
+
+startAutoRefresh();
 
 const CACHE_KEY = 'dupin_cache_v2';
 
@@ -181,25 +242,46 @@ function loadCache() {
   } catch(e) { return false; }
 }
 
-async function loadAll() {
+async function loadAll(opts = {}) {
+  const background = !!opts.background;
+  _lastRefreshAt = Date.now();
   const hasCached = loadCache();
-  if (hasCached) {
+  if (background) {
+    // 背景刷新：不動 loading 遮罩、不清畫面，抓到新資料才無痕換上
+  } else if (hasCached) {
     showLoading(false);
     render();
   } else {
     showLoading(true);
   }
 
-  const [wi, c, s, w, exp, ftpl, meal, setl] = await Promise.all([
-    api('getAll', '工作項目'),
-    api('getAll', '客戶'),
-    api('getSettings'),
-    api('getAll', '員工'),
-    api('getAll', '支出記錄'),
-    api('getAll', '固定支出'),
-    api('getAll', '餐飲記錄'),
-    api('getAll', '結算記錄'),
-  ]);
+  // 批次讀取：暫時靜音單支 toast，改由本函式最後統一提示一次
+  const readOpts = { retry: true, silent: true };
+  _suppressApiToast = true;
+  let batch;
+  try {
+    batch = await Promise.all([
+      api('getAll', '工作項目', {}, readOpts),
+      api('getAll', '客戶', {}, readOpts),
+      api('getSettings', null, {}, readOpts),
+      api('getAll', '員工', {}, readOpts),
+      api('getAll', '支出記錄', {}, readOpts),
+      api('getAll', '固定支出', {}, readOpts),
+      api('getAll', '餐飲記錄', {}, readOpts),
+      api('getAll', '結算記錄', {}, readOpts),
+    ]);
+  } finally {
+    _suppressApiToast = false;
+  }
+  const [wi, c, s, w, exp, ftpl, meal, setl] = batch;
+
+  // 整批全部失敗（網路問題）：統一提示一次，有快取就靜靜沿用舊資料，不噴一排紅字
+  const anyOk     = batch.some(r => r && r.data);
+  const netFailed = batch.some(r => r && r._netError);
+  if (!background && !anyOk && netFailed) {
+    showToast(hasCached ? '連線失敗，顯示為離線資料' : '連線失敗，請檢查網路後重試', 'error');
+  }
+
   if (wi.data)   state.items          = wi.data.map(normalizeItem);
   if (c.data)    state.customers      = c.data;
   if (s.data)    state.settings       = s.data;
@@ -220,7 +302,7 @@ async function loadAll() {
   }
 
   if (auth.email && !isAdmin()) {
-    const mf = await api('getMyFees', null, {});
+    const mf = await api('getMyFees', null, {}, readOpts);
     if (mf.data) state.myFees = mf.data.map(normalizeItem);
     checkPaymentCelebration();
   }
