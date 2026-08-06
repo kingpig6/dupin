@@ -49,15 +49,37 @@ const API_SECRET = 'dupin2026';
 const TOKEN_REFRESH_MAX_ATTEMPTS = 3;
 const TOKEN_REFRESH_RETRY_DELAY_MS = 1500;
 
+// 網路層自動重試：Apps Script 偶爾會轉址逾時／回非 2xx，
+// 一次抖動不該直接判定失敗。僅對「讀取」類請求重試（重試寫入可能造成重複寫）。
+const NET_RETRY_MAX_ATTEMPTS = 3;
+const NET_RETRY_BASE_DELAY_MS = 800;
+
+// loadAll 批次載入時暫時關掉單支請求的錯誤 toast，改由 loadAll 統一提示一次
+let _suppressApiToast = false;
+
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-function postApi(payload) {
-  return fetch(API_URL, {
-    method: 'POST',
-    redirect: 'follow',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(payload),
-  }).then(res => res.json());
+function postApi(payload, retry = false) {
+  const maxAttempts = retry ? NET_RETRY_MAX_ATTEMPTS : 1;
+  const attempt = (n) =>
+    fetch(API_URL, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload),
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .catch(err => {
+        // fetch 被拒（斷線）、轉址逾時或非 2xx：退避後重試
+        if (n < maxAttempts) {
+          return sleep(NET_RETRY_BASE_DELAY_MS * Math.pow(2, n - 1)).then(() => attempt(n + 1));
+        }
+        throw err;
+      });
+  return attempt(1);
 }
 
 function isAuthError(data) {
@@ -72,12 +94,12 @@ function captureSession(data) {
   }
 }
 
-async function api(action, sheet, extra = {}) {
+async function api(action, sheet, extra = {}, opts = {}) {
   const payload = { action, sheet, secret: API_SECRET, ...extra };
   if (auth.sessionToken) payload.sessionToken = auth.sessionToken;
   if (auth.idToken)      payload.idToken = auth.idToken;
   try {
-    let data = await postApi(payload);
+    let data = await postApi(payload, opts.retry);
     captureSession(data);
 
     // 只有在「沒有長效 session」的過渡狀態才退回 Google 靜默刷新重試
@@ -85,7 +107,7 @@ async function api(action, sheet, extra = {}) {
     while (isAuthError(data) && !auth.sessionToken && attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
       attempts++;
       const refreshed = await silentTokenRefresh();
-      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload); captureSession(data); }
+      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload, opts.retry); captureSession(data); }
       else if (attempts < TOKEN_REFRESH_MAX_ATTEMPTS) await sleep(TOKEN_REFRESH_RETRY_DELAY_MS);
     }
 
@@ -99,31 +121,37 @@ async function api(action, sheet, extra = {}) {
     }
     return data;
   } catch (e) {
-    showToast('網路錯誤，請確認 API_URL 已設定', 'error');
-    return { error: e.message };
+    // 網路層失敗：批次載入時交由 loadAll 統一提示，避免一次噴出一排紅字
+    if (!opts.silent && !_suppressApiToast) showToast('網路連線失敗，請稍後再試', 'error');
+    return { error: e.message, _netError: true };
   }
 }
 
 let _silentRefreshResolve = null;
+let _silentRefreshPromise = null;
 
 function silentTokenRefresh() {
-  return new Promise(resolve => {
+  // 多支 api 並發（loadAll 一次 8 支）時共用同一次刷新，
+  // 避免同時多次呼叫 prompt()／互相覆蓋 _silentRefreshResolve 造成 FedCM AbortError 與卡死
+  if (_silentRefreshPromise) return _silentRefreshPromise;
+  _silentRefreshPromise = new Promise(resolve => {
     if (!window.google || !google.accounts || !GOOGLE_CLIENT_ID) { resolve(false); return; }
-    const timeout = setTimeout(() => { _silentRefreshResolve = null; resolve(false); }, 5000);
-    // 不重新 initialize（避免 FedCM AbortError），讓 handleCredentialResponse 接收新 token
-    _silentRefreshResolve = () => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
       clearTimeout(timeout);
       _silentRefreshResolve = null;
-      resolve(true);
+      resolve(ok);
     };
+    const timeout = setTimeout(() => finish(false), 5000);
+    // 不重新 initialize（避免 FedCM AbortError），讓 handleCredentialResponse 接收新 token
+    _silentRefreshResolve = () => finish(true);
     google.accounts.id.prompt(notification => {
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-        clearTimeout(timeout);
-        _silentRefreshResolve = null;
-        resolve(false);
-      }
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()) finish(false);
     });
-  });
+  }).finally(() => { _silentRefreshPromise = null; });
+  return _silentRefreshPromise;
 }
 
 // 排程下一次靜默刷新；不管上一次成功或失敗都要繼續排，避免刷新鏈中斷後就再也不會自動恢復
@@ -136,9 +164,42 @@ function scheduleTokenRefresh() {
   }, 50 * 60 * 1000); // 50 分鐘後靜默刷新（token 1 小時到期前）
 }
 
-// ── 離線偵測 ────────────────────────────────
-window.addEventListener('online',  () => showToast('網路已恢復 ✓'));
+// ── 離線偵測 & 自動刷新 ──────────────────────
+const BACKGROUND_REFRESH_MS = 60 * 1000;      // 每 60 秒背景靜默刷新
+const FOREGROUND_REFRESH_THROTTLE_MS = 5000;  // 回到前景 5 秒內不重複抓
+let _lastRefreshAt = 0;
+
+// 只有已真正進入系統（無登入模式，或已登入）才自動刷新
+function _canRefresh() {
+  return API_URL !== 'YOUR_APPS_SCRIPT_URL_HERE'
+    && (!GOOGLE_CLIENT_ID || !!auth.email)
+    && navigator.onLine !== false;
+}
+
+// 背景靜默刷新：不動 loading 遮罩、不噴 toast，只把最新資料換上畫面
+function backgroundRefresh(force) {
+  if (!_canRefresh()) return;
+  const now = Date.now();
+  if (!force && now - _lastRefreshAt < FOREGROUND_REFRESH_THROTTLE_MS) return;
+  loadAll({ background: true });
+}
+
+function startAutoRefresh() {
+  clearInterval(window._autoRefreshTimer);
+  window._autoRefreshTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') backgroundRefresh(false);
+  }, BACKGROUND_REFRESH_MS);
+}
+
+window.addEventListener('online',  () => { showToast('網路已恢復 ✓'); backgroundRefresh(true); });
 window.addEventListener('offline', () => showToast('目前離線，操作可能不會儲存', 'error'));
+// 回到前景（切回 App／解鎖手機）就刷新，解決「員工頁面資料沒有馬上更新」
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') backgroundRefresh(false);
+});
+window.addEventListener('focus', () => backgroundRefresh(false));
+
+startAutoRefresh();
 
 const CACHE_KEY = 'dupin_cache_v2';
 
@@ -181,25 +242,46 @@ function loadCache() {
   } catch(e) { return false; }
 }
 
-async function loadAll() {
+async function loadAll(opts = {}) {
+  const background = !!opts.background;
+  _lastRefreshAt = Date.now();
   const hasCached = loadCache();
-  if (hasCached) {
+  if (background) {
+    // 背景刷新：不動 loading 遮罩、不清畫面，抓到新資料才無痕換上
+  } else if (hasCached) {
     showLoading(false);
     render();
   } else {
     showLoading(true);
   }
 
-  const [wi, c, s, w, exp, ftpl, meal, setl] = await Promise.all([
-    api('getAll', '工作項目'),
-    api('getAll', '客戶'),
-    api('getSettings'),
-    api('getAll', '員工'),
-    api('getAll', '支出記錄'),
-    api('getAll', '固定支出'),
-    api('getAll', '餐飲記錄'),
-    api('getAll', '結算記錄'),
-  ]);
+  // 批次讀取：暫時靜音單支 toast，改由本函式最後統一提示一次
+  const readOpts = { retry: true, silent: true };
+  _suppressApiToast = true;
+  let batch;
+  try {
+    batch = await Promise.all([
+      api('getAll', '工作項目', {}, readOpts),
+      api('getAll', '客戶', {}, readOpts),
+      api('getSettings', null, {}, readOpts),
+      api('getAll', '員工', {}, readOpts),
+      api('getAll', '支出記錄', {}, readOpts),
+      api('getAll', '固定支出', {}, readOpts),
+      api('getAll', '餐飲記錄', {}, readOpts),
+      api('getAll', '結算記錄', {}, readOpts),
+    ]);
+  } finally {
+    _suppressApiToast = false;
+  }
+  const [wi, c, s, w, exp, ftpl, meal, setl] = batch;
+
+  // 整批全部失敗（網路問題）：統一提示一次，有快取就靜靜沿用舊資料，不噴一排紅字
+  const anyOk     = batch.some(r => r && r.data);
+  const netFailed = batch.some(r => r && r._netError);
+  if (!background && !anyOk && netFailed) {
+    showToast(hasCached ? '連線失敗，顯示為離線資料' : '連線失敗，請檢查網路後重試', 'error');
+  }
+
   if (wi.data)   state.items          = wi.data.map(normalizeItem);
   if (c.data)    state.customers      = c.data;
   if (s.data)    state.settings       = s.data;
@@ -220,7 +302,7 @@ async function loadAll() {
   }
 
   if (auth.email && !isAdmin()) {
-    const mf = await api('getMyFees', null, {});
+    const mf = await api('getMyFees', null, {}, readOpts);
     if (mf.data) state.myFees = mf.data.map(normalizeItem);
     checkPaymentCelebration();
   }
@@ -359,7 +441,7 @@ function toggleSection(key) {
 function renderOrders() {
   return `
   <div class="relative mb-3">
-    <input type="search" placeholder="搜尋客戶、品名、車號、師傅…"
+    <input type="search" placeholder="搜尋客戶、品名、類型、師傅…"
       value="${state.search}"
       oninput="state.search=this.value;document.getElementById('orderListContent').innerHTML=renderOrdersContent()"
       class="w-full pl-9 pr-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500"/>
@@ -599,6 +681,11 @@ function renderCustomerDetail() {
     const feeChip = feeType
       ? `<span class="text-xs px-1.5 py-0.5 rounded ${feeType==='接單'?'bg-teal-800 text-teal-200':(feeType==='傭金'?'bg-indigo-900 text-indigo-200':'bg-amber-900 text-amber-200')}">${feeType}</span>`
       : '';
+    // 訂購類型（客訂／現貨）沿用「車號」欄位儲存；只在為客訂／現貨時顯示於品名最前方
+    const orderType = it['車號'] || '';
+    const typeChip = (orderType === '客訂' || orderType === '現貨')
+      ? `<span class="text-xs px-1.5 py-0.5 rounded font-semibold ${orderType==='客訂'?'bg-rose-900 text-rose-200':'bg-sky-900 text-sky-200'}">${orderType}</span>`
+      : '';
     return `
     <div class="card" id="itemCard_${it['工作ID']}">
       <div class="flex justify-between items-start">
@@ -612,10 +699,9 @@ function renderCustomerDetail() {
         </label>` : ''}
         <div class="flex-1 min-w-0">
           ${worker ? `<div class="text-xs text-amber-400 font-semibold">${it['客戶'] || ''}</div>` : ''}
-          <div class="font-semibold flex items-center gap-1.5">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}${feeChip}</div>
+          <div class="font-semibold flex items-center gap-1.5">${typeChip}${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}${feeChip}</div>
           <div class="text-xs text-gray-400 mb-1">
             ${it['數量']} × $${Number(it['單價']).toLocaleString()}
-            ${it['車號'] ? ' · ' + it['車號'] : ''}
             ${it['負責師傅'] ? ' · ' + it['負責師傅'] : ''}
           </div>
           <div class="text-xs text-gray-500 mb-1">
@@ -788,7 +874,11 @@ function editItem(id) {
         oninput="document.getElementById('ei_amt').textContent='$'+((this.value||0)*(document.getElementById('ei_price').value||0)).toLocaleString();onEditFeeTypeChange()"/>
       <input id="ei_price" value="${it['單價']||''}"       type="number" placeholder="單價"
         oninput="document.getElementById('ei_amt').textContent='$'+((document.getElementById('ei_qty').value||1)*this.value).toLocaleString();onEditFeeTypeChange()"/>
-      <input id="ei_plate"  value="${it['車號']||''}"      placeholder="車號（選填）"/>
+      <select id="ei_type">
+        <option value="" ${!['客訂','現貨'].includes(it['車號'])?'selected':''}>訂購類型（選填）</option>
+        <option value="客訂" ${it['車號']==='客訂'?'selected':''}>客訂</option>
+        <option value="現貨" ${it['車號']==='現貨'?'selected':''}>現貨</option>
+      </select>
       <select id="ei_worker" onchange="onEditFeeTypeChange()">
         <option value="">負責師傅（選填）</option>
         ${state.workers.map(w => `<option value="${w}" ${it['負責師傅']===w?'selected':''}>${w}</option>`).join('')}
@@ -865,7 +955,7 @@ async function saveItem(id, btn) {
     '單價':     price,
     '金額':     qty * price,
     '交貨期限': document.getElementById('ei_deadline').value,
-    '車號':     document.getElementById('ei_plate').value.trim(),
+    '車號':     document.getElementById('ei_type').value,  // 沿用「車號」欄位儲存訂購類型（客訂／現貨）
     '負責師傅': document.getElementById('ei_worker').value.trim(),
     '費用類型': document.getElementById('ei_fee_type').value,
     '費用金額': Number(document.getElementById('ei_fee_amt').value) || 0,
@@ -1320,7 +1410,11 @@ function renderItemRow(idx) {
       <input placeholder="單價" type="number" id="r${idx}_price" oninput="calcRowAmount(${idx})"/>
     </div>
     <div class="grid grid-cols-2 gap-2 mb-2">
-      <input placeholder="車號（選填）" id="r${idx}_plate"/>
+      <select id="r${idx}_type">
+        <option value="">訂購類型（選填）</option>
+        <option value="客訂">客訂</option>
+        <option value="現貨">現貨</option>
+      </select>
       <select id="r${idx}_worker" onchange="onFeeTypeChange(${idx})">
         <option value="">負責師傅（選填）</option>
         ${workerOptions().map(w => `<option value="${w}">${w}</option>`).join('')}
@@ -1477,7 +1571,7 @@ async function saveNewItems(btn) {
       '單價':     price,
       '金額':     qty * price,
       '交貨期限': document.getElementById(`r${idx}_deadline`)?.value        || '',
-      '車號':     document.getElementById(`r${idx}_plate`)?.value.trim()    || '',
+      '車號':     document.getElementById(`r${idx}_type`)?.value           || '',  // 沿用「車號」欄位儲存訂購類型
       '負責師傅': document.getElementById(`r${idx}_worker`)?.value.trim()   || '',
       '費用類型':     document.getElementById(`r${idx}_fee_type`)?.value        || '',
       '費用金額':     Number(document.getElementById(`r${idx}_fee_amt`)?.value) || 0,
@@ -1628,8 +1722,8 @@ function parseVoiceLocalFill(text) {
   if (qtyMatch) { const qty = toNum(qtyMatch[1]); const el = document.getElementById(`r${row}_qty`); if (el && qty) { el.value = qty; calcRowAmount(row); } }
   const priceMatch = text.match(/(?:單價|每[個件台])?[＄$]?(\d[\d,]*|\d+[萬千百]?\d*)\s*[元塊錢萬千]/);
   if (priceMatch) { const price = toNum(priceMatch[1].replace(/萬/,'0000').replace(/千/,'000').replace(/百/,'00')); const el = document.getElementById(`r${row}_price`); if (el && price) { el.value = price; calcRowAmount(row); } }
-  const plateMatch = text.match(/[A-Z]{1,3}[-\s]?\d{3,4}|\d{3,4}[-\s]?[A-Z]{1,3}/i);
-  if (plateMatch) { const el = document.getElementById(`r${row}_plate`); if (el) el.value = plateMatch[0].toUpperCase(); }
+  const typeMatch = text.match(/客訂|現貨/);
+  if (typeMatch) { const el = document.getElementById(`r${row}_type`); if (el) el.value = typeMatch[0]; }
   showToast('語音已解析，AI 解析中…');
 }
 
@@ -1671,7 +1765,7 @@ async function parseVoiceWithAI(text) {
         if (item.spec)   document.getElementById(`r${idx}_spec`).value     = item.spec;
         if (item.qty)    document.getElementById(`r${idx}_qty`).value      = item.qty;
         if (item.price)  document.getElementById(`r${idx}_price`).value    = item.price;
-        if (item.plate)  document.getElementById(`r${idx}_plate`).value    = item.plate;
+        { const t = item.orderType || item.plate; if (['客訂','現貨'].includes(t)) { const el = document.getElementById(`r${idx}_type`); if (el) el.value = t; } }
         if (item.worker) document.getElementById(`r${idx}_worker`).value   = item.worker;
         if (item.note)   document.getElementById(`r${idx}_note`).value     = item.note;
         if (d.deadline)  document.getElementById(`r${idx}_deadline`).value = d.deadline;
@@ -1727,7 +1821,7 @@ async function parseTextOrder() {
         if (item.spec)   document.getElementById(`r${idx}_spec`).value     = item.spec;
         if (item.qty)    document.getElementById(`r${idx}_qty`).value      = item.qty  || 1;
         if (item.price)  document.getElementById(`r${idx}_price`).value    = item.price || '';
-        if (item.plate)  document.getElementById(`r${idx}_plate`).value    = item.plate || '';
+        { const t = item.orderType || item.plate; if (['客訂','現貨'].includes(t)) { const el = document.getElementById(`r${idx}_type`); if (el) el.value = t; } }
         if (item.worker) document.getElementById(`r${idx}_worker`).value   = item.worker || '';
         if (item.note)   document.getElementById(`r${idx}_note`).value     = item.note  || '';
         if (d.deadline)  document.getElementById(`r${idx}_deadline`).value = d.deadline;
