@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="theme-color" content="#f59e0b">
 <title>獨品工坊 · 訂單查詢</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body { background:#111827; color:#f3f4f6; font-family:'Noto Sans TC',sans-serif; }
@@ -33,15 +34,41 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbyeGdSEt24vgZtZzrG36oA4
 
 const token = new URLSearchParams(location.search).get('token');
 
+// Apps Script 偶爾會回 echo 404 / HTML 錯誤頁（非 JSON），退避重試幾次再放棄，避免永遠卡在「載入中」
+async function loadCustomerData() {
+  const url = API_URL + '?action=customerView&token=' + encodeURIComponent(token);
+  const MAX = 4;
+  for (let i = 1; i <= MAX; i++) {
+    try {
+      const res = await fetch(url, { redirect: 'follow' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } catch (e) {
+      if (i === MAX) throw e;
+      await new Promise(r => setTimeout(r, 700 * Math.pow(2, i - 1)));
+    }
+  }
+}
+
 async function load() {
+  const appEl = document.getElementById('app');
   if (!token) {
-    document.getElementById('app').innerHTML = '<p class="text-center text-red-400 mt-20">無效的查詢連結</p>';
+    appEl.innerHTML = '<p class="text-center text-red-400 mt-20">無效的查詢連結</p>';
     return;
   }
-  const res = await fetch(API_URL + '?action=customerView&token=' + encodeURIComponent(token));
-  const data = await res.json();
+  appEl.innerHTML = '<div class="text-center text-gray-500 mt-20">載入中…</div>';
+  let data;
+  try {
+    data = await loadCustomerData();
+  } catch (e) {
+    appEl.innerHTML = `<div class="text-center mt-20">
+        <p class="text-red-400 mb-3">連線逾時，載入失敗</p>
+        <button onclick="load()" style="background:#f59e0b;color:#111827;font-weight:600;padding:8px 20px;border:none;border-radius:8px;cursor:pointer;">重新載入</button>
+      </div>`;
+    return;
+  }
   if (data.error) {
-    document.getElementById('app').innerHTML = `<p class="text-center text-red-400 mt-20">${data.error === 'Invalid token' ? '連結無效或已過期' : data.error}</p>`;
+    appEl.innerHTML = `<p class="text-center text-red-400 mt-20">${data.error === 'Invalid token' ? '連結無效或已過期' : data.error}</p>`;
     return;
   }
 
