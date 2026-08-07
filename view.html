@@ -70,11 +70,16 @@ async function load() {
           const prog = it['進度'] || '待施工';
           const color = progColor[prog] || 'bg-gray-600';
           const amt = Number(it['金額'] || 0);
+          // 訂購類型（客訂／現貨）沿用「車號」欄位；只在為客訂／現貨時顯示於品名最前方
+          const orderType = it['車號'] || '';
+          const typeChip = (orderType === '客訂' || orderType === '現貨')
+            ? `<span class="text-xs px-1.5 py-0.5 rounded font-semibold mr-1 ${orderType==='客訂'?'bg-rose-900 text-rose-200':'bg-sky-900 text-sky-200'}">${orderType}</span>`
+            : '';
           return `
           <div class="card">
             <div class="flex justify-between items-start">
               <div class="flex-1 min-w-0">
-                <div class="font-semibold">${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
+                <div class="font-semibold">${typeChip}${it['品名'] || '-'}${it['規格'] ? ' · ' + it['規格'] : ''}</div>
                 <div class="text-xs text-gray-400 mt-0.5">
                   ${it['數量']} × $${Number(it['單價']).toLocaleString()}
                 </div>
