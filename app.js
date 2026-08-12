@@ -253,6 +253,9 @@ async function loadAll(opts = {}) {
     render();
   } else {
     showLoading(true);
+    // 無快取的首次載入：顯示可見的載入指示，避免內容區一片空白像故障
+    const appEl = document.getElementById('app');
+    if (appEl) appEl.innerHTML = '<div class="text-center text-gray-500" style="margin-top:25vh;">載入中…</div>';
   }
 
   // 批次讀取：暫時靜音單支 toast，改由本函式最後統一提示一次
@@ -280,6 +283,16 @@ async function loadAll(opts = {}) {
   const netFailed = batch.some(r => r && r._netError);
   if (!background && !anyOk && netFailed) {
     showToast(hasCached ? '連線失敗，顯示為離線資料' : '連線失敗，請檢查網路後重試', 'error');
+    if (!hasCached) {
+      // 無快取又整批失敗：顯示錯誤與重新載入，避免停在空白畫面
+      const appEl = document.getElementById('app');
+      if (appEl) appEl.innerHTML = `<div class="text-center" style="margin-top:20vh;">
+          <p class="text-red-400 mb-3">連線失敗，資料載入不完全</p>
+          <button onclick="loadAll()" class="btn btn-primary">重新載入</button>
+        </div>`;
+      showLoading(false);
+      return;
+    }
   }
 
   if (wi.data)   state.items          = wi.data.map(normalizeItem);
