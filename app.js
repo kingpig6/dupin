@@ -176,9 +176,26 @@ function _canRefresh() {
     && navigator.onLine !== false;
 }
 
+// 使用者是否正在輸入／有開啟中的表單：背景刷新會重建畫面，會洗掉未送出的輸入，此時應跳過
+function _isEditing() {
+  // 開單／編輯客戶：整頁都是表單
+  if (state.view === 'newOrder' || state.view === 'editCustomer') return true;
+  // 任何輸入框正在被編輯（開單列／編輯品項／記帳／搜尋…）
+  const el = document.activeElement;
+  if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+  // 展開中的編輯品項表單（即使沒焦點也保護半填內容）
+  if (document.getElementById('ei_name')) return true;
+  // 展開中（可見）的「記一筆支出」表單
+  const exp = document.getElementById('exp_amt');
+  if (exp && exp.offsetParent !== null) return true;
+  return false;
+}
+
 // 背景靜默刷新：不動 loading 遮罩、不噴 toast，只把最新資料換上畫面
 function backgroundRefresh(force) {
   if (!_canRefresh()) return;
+  // 打字／表單編輯中不刷新，避免重建畫面把還沒送出的字洗掉
+  if (_isEditing()) return;
   const now = Date.now();
   if (!force && now - _lastRefreshAt < FOREGROUND_REFRESH_THROTTLE_MS) return;
   loadAll({ background: true });
