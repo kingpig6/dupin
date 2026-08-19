@@ -72,35 +72,45 @@ const NET_RETRY_BASE_DELAY_MS = 800;
 const WRITE_ACTIONS = ['add', 'addBatch', 'update', 'delete', 'saveSettings'];
 
 // 後端忙碌（取不到鎖）時的重試設定
-const BUSY_RETRY_MAX = 3;
+const BUSY_RETRY_MAX = 2;
 const BUSY_RETRY_DELAY_MS = 1200;
+
+// 單次 api() 對後端的實際請求總數上限。
+// 網路重試 × BUSY 重試 × token 重試會相乘，若不設總量上限，
+// 後端一不穩就被我們自己打成雪崩（重試越多→後端越慢→更多失敗）。
+const MAX_REQUESTS_PER_CALL = 4;
 
 // loadAll 批次載入時暫時關掉單支請求的錯誤 toast，改由 loadAll 統一提示一次
 let _suppressApiToast = false;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-function postApi(payload, retry = false) {
-  const maxAttempts = retry ? NET_RETRY_MAX_ATTEMPTS : 1;
-  const attempt = (n) =>
-    fetch(API_URL, {
-      method: 'POST',
-      redirect: 'follow',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(payload),
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      })
-      .catch(err => {
-        // fetch 被拒（斷線）、轉址逾時或非 2xx：退避後重試
-        if (n < maxAttempts) {
-          return sleep(NET_RETRY_BASE_DELAY_MS * Math.pow(2, n - 1)).then(() => attempt(n + 1));
-        }
-        throw err;
+// budget：本次 api() 還可用的請求次數（網路／BUSY／token 重試共用同一份預算，
+// 避免各層重試相乘把後端打成雪崩）
+async function postApi(payload, retry = false, budget = null) {
+  const netMax = retry ? NET_RETRY_MAX_ATTEMPTS : 1;
+  let lastErr;
+  for (let n = 1; n <= netMax; n++) {
+    if (budget) {
+      if (budget.left <= 0) throw (lastErr || new Error('請求次數已達上限'));
+      budget.left--;
+    }
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        redirect: 'follow',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
       });
-  return attempt(1);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+      // fetch 被拒（斷線）、轉址逾時或非 2xx：退避後重試
+      if (n < netMax) await sleep(NET_RETRY_BASE_DELAY_MS * Math.pow(2, n - 1));
+    }
+  }
+  throw lastErr;
 }
 
 function isAuthError(data) {
@@ -121,25 +131,27 @@ async function api(action, sheet, extra = {}, opts = {}) {
   if (auth.idToken)      payload.idToken = auth.idToken;
   // 寫入類預設帶重試（後端冪等，不會產生重複資料）
   const useRetry = opts.retry !== undefined ? opts.retry : WRITE_ACTIONS.indexOf(action) >= 0;
+  // 整個 api() 共用一份請求預算，各層重試不再相乘
+  const budget = { left: MAX_REQUESTS_PER_CALL };
   try {
-    let data = await postApi(payload, useRetry);
+    let data = await postApi(payload, useRetry, budget);
     captureSession(data);
 
     // 後端忙碌（多人同時寫入取不到鎖）：稍候重試，不要直接判定失敗
     let busyTries = 0;
-    while (data && data.error === 'BUSY' && busyTries < BUSY_RETRY_MAX) {
+    while (data && data.error === 'BUSY' && busyTries < BUSY_RETRY_MAX && budget.left > 0) {
       busyTries++;
       await sleep(BUSY_RETRY_DELAY_MS * busyTries);
-      data = await postApi(payload, useRetry);
+      data = await postApi(payload, false, budget);   // BUSY 是後端明確回應，不需再疊網路重試
       captureSession(data);
     }
 
     // 只有在「沒有長效 session」的過渡狀態才退回 Google 靜默刷新重試
     let attempts = 0;
-    while (isAuthError(data) && !auth.sessionToken && attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
+    while (isAuthError(data) && !auth.sessionToken && attempts < TOKEN_REFRESH_MAX_ATTEMPTS && budget.left > 0) {
       attempts++;
       const refreshed = await silentTokenRefresh();
-      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload, useRetry); captureSession(data); }
+      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload, false, budget); captureSession(data); }
       else if (attempts < TOKEN_REFRESH_MAX_ATTEMPTS) await sleep(TOKEN_REFRESH_RETRY_DELAY_MS);
     }
 
@@ -291,6 +303,24 @@ function loadCache() {
   } catch(e) { return false; }
 }
 
+// 舊制後備：後端還沒部署 getBundle 時，用原本的分批請求組出相同結構
+async function legacyLoadBundle(readOpts) {
+  const names = ['工作項目', '客戶', '員工', '支出記錄', '固定支出', '餐飲記錄', '結算記錄'];
+  const results = await Promise.all(
+    names.map(n => api('getAll', n, {}, readOpts)).concat([api('getSettings', null, {}, readOpts)])
+  );
+  const settings = results[results.length - 1];
+  if (!results.some(r => r && r.data)) return { error: '連線失敗' };
+  const data = {};
+  names.forEach((n, i) => { data[n] = (results[i] && results[i].data) || []; });
+  data['設定'] = (settings && settings.data) || {};
+  if (auth.email && !isAdmin()) {
+    const mf = await api('getMyFees', null, {}, readOpts);
+    if (mf && mf.data) data['我的費用'] = mf.data;
+  }
+  return { data };
+}
+
 async function loadAll(opts = {}) {
   const background = !!opts.background;
   _lastRefreshAt = Date.now();
@@ -307,29 +337,34 @@ async function loadAll(opts = {}) {
     if (appEl) appEl.innerHTML = '<div class="text-center text-gray-500" style="margin-top:25vh;">載入中…</div>';
   }
 
-  // 批次讀取：暫時靜音單支 toast，改由本函式最後統一提示一次
+  // 單一請求取回所有表：原本同時打 8 支，Apps Script 併發能力有限，
+  // 很容易觸發 googleusercontent 的 echo 404，也拖慢載入
   const readOpts = { retry: true, silent: true };
   _suppressApiToast = true;
-  let batch;
+  let res;
   try {
-    batch = await Promise.all([
-      api('getAll', '工作項目', {}, readOpts),
-      api('getAll', '客戶', {}, readOpts),
-      api('getSettings', null, {}, readOpts),
-      api('getAll', '員工', {}, readOpts),
-      api('getAll', '支出記錄', {}, readOpts),
-      api('getAll', '固定支出', {}, readOpts),
-      api('getAll', '餐飲記錄', {}, readOpts),
-      api('getAll', '結算記錄', {}, readOpts),
-    ]);
+    res = await api('getBundle', null, {}, readOpts);
+    // 保險：後端尚未部署 getBundle 時，自動退回舊的分批讀取，避免整個 App 載不出資料
+    if (res && res.error && /Unknown action/i.test(String(res.error))) {
+      res = await legacyLoadBundle(readOpts);
+    }
   } finally {
     _suppressApiToast = false;
   }
-  const [wi, c, s, w, exp, ftpl, meal, setl] = batch;
 
-  // 整批全部失敗（網路問題）：統一提示一次，有快取就靜靜沿用舊資料，不噴一排紅字
-  const anyOk     = batch.some(r => r && r.data);
-  const netFailed = batch.some(r => r && r._netError);
+  const b = (res && res.data) || {};
+  const wi   = { data: b['工作項目'] };
+  const c    = { data: b['客戶'] };
+  const s    = { data: b['設定'] };
+  const w    = { data: b['員工'] };
+  const exp  = { data: b['支出記錄'] };
+  const ftpl = { data: b['固定支出'] };
+  const meal = { data: b['餐飲記錄'] };
+  const setl = { data: b['結算記錄'] };
+
+  // 載入失敗：統一提示一次，有快取就靜靜沿用舊資料，不噴一排紅字
+  const anyOk     = !!(res && res.data);
+  const netFailed = !!(res && res.error);
   if (!background && !anyOk && netFailed) {
     showToast(hasCached ? '連線失敗，顯示為離線資料' : '連線失敗，請檢查網路後重試', 'error');
     if (!hasCached) {
@@ -363,9 +398,9 @@ async function loadAll(opts = {}) {
     });
   }
 
-  if (auth.email && !isAdmin()) {
-    const mf = await api('getMyFees', null, {}, readOpts);
-    if (mf.data) state.myFees = mf.data.map(normalizeItem);
+  // 員工的傭金明細已包含在 bundle 內，不需要再多打一支
+  if (auth.email && !isAdmin() && b['我的費用']) {
+    state.myFees = b['我的費用'].map(normalizeItem);
     checkPaymentCelebration();
   }
 
