@@ -212,6 +212,8 @@ function scheduleTokenRefresh() {
 const BACKGROUND_REFRESH_MS = 60 * 1000;      // 每 60 秒背景靜默刷新
 const FOREGROUND_REFRESH_THROTTLE_MS = 5000;  // 回到前景 5 秒內不重複抓
 let _lastRefreshAt = 0;
+// 背景已抓到新資料但尚未畫出（等使用者切換畫面時再顯示，避免打斷瀏覽）
+let _pendingFreshData = false;
 
 // 只有已真正進入系統（無登入模式，或已登入）才自動刷新
 function _canRefresh() {
@@ -235,20 +237,23 @@ function _isEditing() {
   return false;
 }
 
-// 背景靜默刷新：不動 loading 遮罩、不噴 toast，只把最新資料換上畫面
-function backgroundRefresh(force) {
+// 背景靜默刷新：不動 loading 遮罩、不噴 toast
+// deferRender = true 時只更新資料、不重畫畫面，避免瀏覽中被打斷（捲動位置跳掉）
+function backgroundRefresh(force, opts = {}) {
   if (!_canRefresh()) return;
   // 打字／表單編輯中不刷新，避免重建畫面把還沒送出的字洗掉
   if (_isEditing()) return;
   const now = Date.now();
   if (!force && now - _lastRefreshAt < FOREGROUND_REFRESH_THROTTLE_MS) return;
-  loadAll({ background: true });
+  loadAll({ background: true, deferRender: !!opts.deferRender });
 }
 
 function startAutoRefresh() {
   clearInterval(window._autoRefreshTimer);
   window._autoRefreshTimer = setInterval(() => {
-    if (document.visibilityState === 'visible') backgroundRefresh(false);
+    // 定時抓最新資料，但「先不畫上去」：使用者可能正在滑訂單，
+    // 重畫會讓捲動位置跳掉。資料先備妥，等切換畫面時立即顯示。
+    if (document.visibilityState === 'visible') backgroundRefresh(false, { deferRender: true });
   }, BACKGROUND_REFRESH_MS);
 }
 
@@ -323,6 +328,8 @@ async function legacyLoadBundle(readOpts) {
 
 async function loadAll(opts = {}) {
   const background = !!opts.background;
+  // deferRender：只把新資料放進 state，不重畫畫面（避免打斷瀏覽）
+  const deferRender = !!opts.deferRender;
   _lastRefreshAt = Date.now();
   const hasCached = loadCache();
   if (background) {
@@ -406,6 +413,9 @@ async function loadAll(opts = {}) {
 
   saveCache();
   showLoading(false);
+  // 瀏覽中的定時刷新只更新資料，不重畫；標記為待顯示，切換畫面時自然帶出最新內容
+  if (deferRender) { _pendingFreshData = true; return; }
+  _pendingFreshData = false;
   render();
 }
 
@@ -444,7 +454,12 @@ function showView(view, data = null) {
   state.view = view;
   if (view === 'customerDetail' && data !== null) state.viewCustomer = data;
   if (view === 'editCustomer'   && data !== null) state.editCustomer = data;
+  // 先用目前的資料立即畫出來（背景每 60 秒已更新過，通常就是最新的），不讓使用者等網路
+  _pendingFreshData = false;
   render();
+  // 切換畫面時順手再抓一次；同樣不重畫，避免回應到達時打斷剛開始的瀏覽，
+  // 抓到的內容會在下次切換畫面時呈現。有節流，快速連點分頁不會狂打後端。
+  backgroundRefresh(false, { deferRender: true });
 }
 
 function goBack() {
