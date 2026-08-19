@@ -125,6 +125,7 @@ function handleRequest(e) {
     let result;
     switch (action) {
       case 'getAll':          result = getAll(sheet, roleInfo); break;
+      case 'getBundle':       result = getBundle(roleInfo); break;
       case 'getMyFees':       result = getMyFees(roleInfo); break;
       case 'add':             result = addRow(sheet, body.data, user); break;
       case 'addBatch':        result = addRows(sheet, body.rows, user); break;
@@ -483,16 +484,36 @@ function getAll(sheetName, roleInfo) {
   return { data };
 }
 
+// ── 一次取回前端啟動所需的所有表（取代原本 8 支併發請求）──
+// Apps Script 併發能力有限，同時打 8 支很容易觸發 googleusercontent 的 echo 404；
+// 合併成單一請求可大幅降低失敗率與載入時間。
+const BUNDLE_SHEETS = ['工作項目', '客戶', '員工', '支出記錄', '固定支出', '餐飲記錄', '結算記錄'];
+
+function getBundle(roleInfo) {
+  const out = {};
+  BUNDLE_SHEETS.forEach(function (name) {
+    const r = getAll(name, roleInfo);
+    out[name] = r && r.data ? r.data : [];
+  });
+  const s = getSettings();
+  out['設定'] = s && s.data ? s.data : {};
+  // 員工才需要自己的傭金明細；管理員不需要（前端也不會用）
+  if (roleInfo && roleInfo.role !== 'admin') {
+    const mf = getMyFees(roleInfo);
+    out['我的費用'] = mf && mf.data ? mf.data : [];
+  }
+  return { data: out };
+}
+
 // ── 員工：查自己的傭金／費用（依「負責師傅」比對姓名）──
 function getMyFees(roleInfo) {
   if (!roleInfo) return { error: 'LOGIN_REQUIRED' };
-  const sheet = ss.getSheetByName('工作項目');
-  if (!sheet) return { error: '工作表不存在：工作項目' };
-  const rows = sheet.getDataRange().getValues();
-  if (rows.length < 2) return { data: [] };
-  const headers = rows[0];
+  const cached = readSheetCached('工作項目');
+  if (!cached) return { error: '工作表不存在：工作項目' };
+  if (!cached.rows.length) return { data: [] };
+  const headers = cached.headers;
   const name = String(roleInfo.name || '').trim();
-  const data = rows.slice(1)
+  const data = cached.rows
     .map(row => {
       const obj = {};
       headers.forEach((h, i) => { obj[h] = row[i]; });
