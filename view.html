@@ -34,6 +34,15 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbyeGdSEt24vgZtZzrG36oA4
 
 const token = new URLSearchParams(location.search).get('token');
 
+// 縮圖網址：Google 圖片原檔常有數 MB，縮到 64px 顯示很浪費頻寬也很慢。
+// lh3.googleusercontent.com 支援 =sN 參數直接取縮圖。
+function thumbUrl(u) {
+  if (/lh3\.googleusercontent\.com/.test(u) && !/=[sw]\d+/.test(u)) {
+    return u.replace(/=.*$/, '') + '=s160';
+  }
+  return u;
+}
+
 // Apps Script 偶爾會回 echo 404 / HTML 錯誤頁（非 JSON），退避重試幾次再放棄，避免永遠卡在「載入中」
 async function loadCustomerData() {
   const url = API_URL + '?action=customerView&token=' + encodeURIComponent(token);
@@ -45,7 +54,8 @@ async function loadCustomerData() {
       return await res.json();
     } catch (e) {
       if (i === MAX) throw e;
-      await new Promise(r => setTimeout(r, 700 * Math.pow(2, i - 1)));
+      // 首次失敗多半是 Apps Script 偶發的 echo 404，立刻重試即可；之後才逐步退避
+      await new Promise(r => setTimeout(r, i === 1 ? 150 : 600 * Math.pow(2, i - 2)));
     }
   }
 }
@@ -118,7 +128,7 @@ async function load() {
                   if (!refs.length) return '';
                   return `<div class="mt-2"><div class="text-xs text-gray-500 mb-1">參考圖片</div>
                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                      ${refs.map(u=>`<a href="${u}" target="_blank"><img src="${u}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #374151;"/></a>`).join('')}
+                      ${refs.map(u=>`<a href="${u}" target="_blank"><img src="${thumbUrl(u)}" loading="lazy" decoding="async" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #374151;"/></a>`).join('')}
                     </div></div>`;
                 })()}
                 <div class="mt-2">
