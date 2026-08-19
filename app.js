@@ -19,7 +19,20 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js')
     .then(reg => reg.update())
     .catch(() => {});
-  navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
+  // 新版接管時原本立刻 reload，會在打單／記帳打到一半時把整頁清空。
+  // 改為：正在填表就先不重載，等離開表單或送出後再套用新版。
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (window._reloadPending) return;
+    window._reloadPending = true;
+    const applyUpdate = () => {
+      if (typeof _isEditing === 'function' && _isEditing()) {
+        setTimeout(applyUpdate, 3000);   // 還在填表：稍後再問一次
+        return;
+      }
+      window.location.reload();
+    };
+    applyUpdate();
+  });
 }
 
 // ── 狀態 ────────────────────────────────────
@@ -49,10 +62,18 @@ const API_SECRET = 'dupin2026';
 const TOKEN_REFRESH_MAX_ATTEMPTS = 3;
 const TOKEN_REFRESH_RETRY_DELAY_MS = 1500;
 
-// 網路層自動重試：Apps Script 偶爾會轉址逾時／回非 2xx，
-// 一次抖動不該直接判定失敗。僅對「讀取」類請求重試（重試寫入可能造成重複寫）。
+// 網路層自動重試：Apps Script 偶爾會轉址逾時／回非 2xx，一次抖動不該直接判定失敗。
+// 寫入類同樣重試——後端 add/addBatch 以主鍵去重、update/delete 本身冪等，
+// 重試不會建立重複資料。
 const NET_RETRY_MAX_ATTEMPTS = 3;
 const NET_RETRY_BASE_DELAY_MS = 800;
+
+// 寫入類 action：一律帶重試（後端已具冪等性）
+const WRITE_ACTIONS = ['add', 'addBatch', 'update', 'delete', 'saveSettings'];
+
+// 後端忙碌（取不到鎖）時的重試設定
+const BUSY_RETRY_MAX = 3;
+const BUSY_RETRY_DELAY_MS = 1200;
 
 // loadAll 批次載入時暫時關掉單支請求的錯誤 toast，改由 loadAll 統一提示一次
 let _suppressApiToast = false;
@@ -98,16 +119,27 @@ async function api(action, sheet, extra = {}, opts = {}) {
   const payload = { action, sheet, secret: API_SECRET, ...extra };
   if (auth.sessionToken) payload.sessionToken = auth.sessionToken;
   if (auth.idToken)      payload.idToken = auth.idToken;
+  // 寫入類預設帶重試（後端冪等，不會產生重複資料）
+  const useRetry = opts.retry !== undefined ? opts.retry : WRITE_ACTIONS.indexOf(action) >= 0;
   try {
-    let data = await postApi(payload, opts.retry);
+    let data = await postApi(payload, useRetry);
     captureSession(data);
+
+    // 後端忙碌（多人同時寫入取不到鎖）：稍候重試，不要直接判定失敗
+    let busyTries = 0;
+    while (data && data.error === 'BUSY' && busyTries < BUSY_RETRY_MAX) {
+      busyTries++;
+      await sleep(BUSY_RETRY_DELAY_MS * busyTries);
+      data = await postApi(payload, useRetry);
+      captureSession(data);
+    }
 
     // 只有在「沒有長效 session」的過渡狀態才退回 Google 靜默刷新重試
     let attempts = 0;
     while (isAuthError(data) && !auth.sessionToken && attempts < TOKEN_REFRESH_MAX_ATTEMPTS) {
       attempts++;
       const refreshed = await silentTokenRefresh();
-      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload, opts.retry); captureSession(data); }
+      if (refreshed) { payload.idToken = auth.idToken; data = await postApi(payload, useRetry); captureSession(data); }
       else if (attempts < TOKEN_REFRESH_MAX_ATTEMPTS) await sleep(TOKEN_REFRESH_RETRY_DELAY_MS);
     }
 
@@ -1022,10 +1054,18 @@ async function deleteItem(id) {
     }, 3000);
     return;
   }
+  // 樂觀移除：先從畫面拿掉，但保留備份；後端確認失敗就還原，避免「畫面刪掉了、表單還在」
+  const removed = state.items.find(x => String(x['工作ID']) === String(id));
   state.items = state.items.filter(x => String(x['工作ID']) !== String(id));
   showView('customerDetail', state.viewCustomer);
   saveCache();
-  api('delete', '工作項目', { key: id });
+  const r = await api('delete', '工作項目', { key: id });
+  if (!r || r.error) {
+    if (removed) state.items.push(removed);
+    saveCache();
+    showView('customerDetail', state.viewCustomer);
+    showToast('刪除失敗，已還原：' + ((r && r.error) || '網路錯誤'), 'error');
+  }
 }
 
 // ── 複製工作項目（拆成多件各自可獨立追蹤進度）────
@@ -1275,10 +1315,23 @@ async function batchMarkPaid(itemIds) {
   showView('customerDetail', state.viewCustomer);
   saveCache();
   showToast(`正在更新 ${itemIds.length} 件...`);
-  await Promise.all(itemIds.map(id =>
+  const results = await Promise.all(itemIds.map(id =>
     api('update', '工作項目', { key: id, data: { '收款狀態': '已收款' } })
+      .then(r => ({ id, ok: !!(r && !r.error) }))
   ));
-  showToast(`已收款完成（${itemIds.length} 件）`);
+  // 逐筆確認：失敗的還原成未收款，避免帳面顯示已收、實際沒寫進去
+  const failed = results.filter(r => !r.ok);
+  if (failed.length) {
+    failed.forEach(f => {
+      const it = state.items.find(x => String(x['工作ID']) === String(f.id));
+      if (it) it['收款狀態'] = '未收款';
+    });
+    saveCache();
+    showView('customerDetail', state.viewCustomer);
+    showToast(`${itemIds.length - failed.length} 件成功、${failed.length} 件失敗（已還原，請重試）`, 'error');
+  } else {
+    showToast(`已收款完成（${itemIds.length} 件）`);
+  }
 }
 
 // ── 請款單勾選 ───────────────────────────────
@@ -1924,11 +1977,12 @@ async function saveCustomer(btn) {
   };
   if (!data['客戶名稱']) { showToast('請填客戶名稱'); return; }
   await withBtn(btn, async () => {
-    if (state.editCustomer) {
-      await api('update', '客戶', { key: data['客戶名稱'], data });
-    } else {
-      await api('add', '客戶', { data });
-    }
+    // 用「原本的」客戶名稱當主鍵，否則改名時會找不到該列、存不進去
+    const origName = state.editCustomer ? (state.editCustomer['客戶名稱'] || data['客戶名稱']) : null;
+    const r = state.editCustomer
+      ? await api('update', '客戶', { key: origName, data })
+      : await api('add', '客戶', { data });
+    if (!r || r.error) { showToast('儲存失敗：' + ((r && r.error) || '網路錯誤'), 'error'); return; }
     state.editCustomer = null;
     await loadAll();
     showView('customers');
@@ -1945,7 +1999,12 @@ async function deleteCustomer(name) {
     return;
   }
   showLoading(true);
-  await api('delete', '客戶', { key: name });
+  const r = await api('delete', '客戶', { key: name });
+  if (!r || r.error) {
+    showLoading(false);
+    showToast('刪除失敗：' + ((r && r.error) || '網路錯誤'), 'error');
+    return;
+  }
   state.editCustomer = null;
   await loadAll();
   showView('customers');

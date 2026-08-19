@@ -159,6 +159,47 @@ function jsonOut(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+// ── 併發鎖：多人同時寫入時排隊，避免互相覆蓋 ──
+// 寫入前先取得鎖；取不到就回錯誤讓前端重試，不要盲目寫下去
+function withLock(fn) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return { error: 'BUSY' };
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+// ── 讀取快取：同一張表 30 秒內重複查詢直接回快取，大幅加快載入 ──
+const CACHE_TTL_SEC = 30;
+
+function cacheKeyFor(sheetName) { return 'sheet_v1_' + sheetName; }
+
+// 讀取整張表（含快取）。回傳 { headers, rows }
+function readSheetCached(sheetName) {
+  const cache = CacheService.getScriptCache();
+  const key = cacheKeyFor(sheetName);
+  try {
+    const hit = cache.get(key);
+    if (hit) return JSON.parse(hit);
+  } catch (e) {}
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return null;
+  const all = sheet.getDataRange().getValues();
+  const payload = { headers: all[0] || [], rows: all.slice(1) };
+  try {
+    const str = JSON.stringify(payload);
+    // 快取上限 100KB，太大就不放（仍可正常運作，只是沒加速）
+    if (str.length < 100000) cache.put(key, str, CACHE_TTL_SEC);
+  } catch (e) {}
+  return payload;
+}
+
+// 寫入後清掉該表快取，讓下一次讀取立刻拿到新資料
+function invalidateCache(sheetName) {
+  try {
+    const keys = sheetName ? [cacheKeyFor(sheetName)] : [];
+    if (keys.length) CacheService.getScriptCache().removeAll(keys);
+  } catch (e) {}
+}
+
 // 餐飲記錄稽核章：新增時蓋登記人+建立時間；每次寫入都更新最後修改人+時間
 function stampMeal(data, who, nowStr, isCreate) {
   if (isCreate) {
@@ -419,12 +460,11 @@ function getCustomerView(token) {
 // ── 通用：取得整張表 ────────────────────────
 // roleInfo 有值且非 admin（一般員工）時，「工作項目」只回傳尚未指派的進行中項目
 function getAll(sheetName, roleInfo) {
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return { error: '工作表不存在：' + sheetName };
-  const rows = sheet.getDataRange().getValues();
-  if (rows.length < 2) return { data: [] };
-  const headers = rows[0];
-  let data = rows.slice(1).map(row => {
+  const cached = readSheetCached(sheetName);
+  if (!cached) return { error: '工作表不存在：' + sheetName };
+  const headers = cached.headers;
+  if (!cached.rows.length) return { data: [] };
+  let data = cached.rows.map(row => {
     const obj = {};
     headers.forEach((h, i) => { obj[h] = row[i]; });
     return obj;
@@ -470,75 +510,137 @@ function sanitizeWorkerField(data, myName) {
 
 // ── 通用：新增一列 ──────────────────────────
 function addRow(sheetName, data, user) {
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return { error: '工作表不存在：' + sheetName };
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  if (user && headers.indexOf('建立者') >= 0 && !data['建立者']) {
-    data['建立者'] = user.name || user.email;
-  }
-  const row = headers.map(h => data[h] !== undefined ? data[h] : '');
-  sheet.appendRow(row);
-  return { success: true };
+  return withLock(function () {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return { error: '工作表不存在：' + sheetName };
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (user && headers.indexOf('建立者') >= 0 && !data['建立者']) {
+      data['建立者'] = user.name || user.email;
+    }
+    // 冪等：主鍵已存在就不重複寫（讓前端可安全重試，不會建出重複資料）
+    const pk = headers[0];
+    if (pk && data[pk] !== undefined && data[pk] !== '') {
+      if (existingKeySet(sheet).has(String(data[pk]))) return { success: true, skipped: 1 };
+    }
+    const row = headers.map(h => data[h] !== undefined ? data[h] : '');
+    sheet.appendRow(row);
+    invalidateCache(sheetName);
+    return { success: true };
+  });
+}
+
+// 取得該表第一欄（主鍵）現有值的集合
+function existingKeySet(sheet) {
+  const last = sheet.getLastRow();
+  if (last < 2) return new Set();
+  return new Set(sheet.getRange(2, 1, last - 1, 1).getValues().map(r => String(r[0])));
 }
 
 // ── 通用：一次寫入多列（單次 setValues，速度遠快於逐筆 appendRow）──
 function addRows(sheetName, rowsData, user) {
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return { error: '工作表不存在：' + sheetName };
-  if (!rowsData || !rowsData.length) return { success: true, count: 0 };
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const creator = user ? (user.name || user.email) : '';
-  const matrix = rowsData.map(data =>
-    headers.map(h => {
-      if (h === '建立者' && creator && !data[h]) return creator;
-      return data[h] !== undefined ? data[h] : '';
-    })
-  );
-  sheet.getRange(sheet.getLastRow() + 1, 1, matrix.length, headers.length).setValues(matrix);
-  return { success: true, count: matrix.length };
+  return withLock(function () {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return { error: '工作表不存在：' + sheetName };
+    if (!rowsData || !rowsData.length) return { success: true, count: 0 };
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const creator = user ? (user.name || user.email) : '';
+
+    // 冪等：濾掉主鍵已存在的列，讓前端可安全重試而不會建出重複資料
+    const pk = headers[0];
+    let toWrite = rowsData;
+    if (pk) {
+      const exists = existingKeySet(sheet);
+      toWrite = rowsData.filter(d => {
+        const k = d[pk];
+        return !(k !== undefined && k !== '' && exists.has(String(k)));
+      });
+    }
+    const skipped = rowsData.length - toWrite.length;
+    if (!toWrite.length) return { success: true, count: 0, skipped: skipped };
+
+    const matrix = toWrite.map(data =>
+      headers.map(h => {
+        if (h === '建立者' && creator && !data[h]) return creator;
+        return data[h] !== undefined ? data[h] : '';
+      })
+    );
+    sheet.getRange(sheet.getLastRow() + 1, 1, matrix.length, headers.length).setValues(matrix);
+    invalidateCache(sheetName);
+    return { success: true, count: matrix.length, skipped: skipped };
+  });
 }
 
 // ── 通用：更新一列（以第一欄主鍵比對）───────
 function updateRow(sheetName, key, data) {
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return { error: '工作表不存在：' + sheetName };
-  const all = sheet.getDataRange().getValues();
-  const headers = all[0];
+  return withLock(function () {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return { error: '工作表不存在：' + sheetName };
+    const all = sheet.getDataRange().getValues();
+    const headers = all[0];
 
-  // 當進度改為「完成」且尚無完工日期時，自動寫入今天
-  if (sheetName === '工作項目' && data['進度'] === '完成' && !data['完工日期']) {
-    const rowIdx = all.findIndex((r, i) => i > 0 && String(r[0]) === String(key));
-    if (rowIdx > 0) {
-      const completedCol = headers.indexOf('完工日期');
-      if (completedCol >= 0 && !all[rowIdx][completedCol]) {
-        data['完工日期'] = new Date().toISOString().slice(0, 10);
+    // 當進度改為「完成」且尚無完工日期時，自動寫入今天
+    if (sheetName === '工作項目' && data['進度'] === '完成' && !data['完工日期']) {
+      const rowIdx = all.findIndex((r, i) => i > 0 && String(r[0]) === String(key));
+      if (rowIdx > 0) {
+        const completedCol = headers.indexOf('完工日期');
+        if (completedCol >= 0 && !all[rowIdx][completedCol]) {
+          data['完工日期'] = new Date().toISOString().slice(0, 10);
+        }
       }
     }
-  }
 
-  for (let i = 1; i < all.length; i++) {
-    if (String(all[i][0]) === String(key)) {
-      headers.forEach((h, ci) => {
-        if (data[h] !== undefined) sheet.getRange(i + 1, ci + 1).setValue(data[h]);
-      });
-      return { success: true, data };
+    for (let i = 1; i < all.length; i++) {
+      if (String(all[i][0]) === String(key)) {
+        // 一次性寫入整列：原本逐格 setValue 每格都是一次往返，欄位多時非常慢
+        const merged = headers.map((h, ci) => data[h] !== undefined ? data[h] : all[i][ci]);
+        sheet.getRange(i + 1, 1, 1, headers.length).setValues([merged]);
+        invalidateCache(sheetName);
+        // 客戶改名：連動更新工作項目裡的客戶欄，避免舊訂單變成孤兒
+        if (sheetName === '客戶' && data['客戶名稱'] && String(data['客戶名稱']) !== String(key)) {
+          renameCustomerInItems(String(key), String(data['客戶名稱']));
+        }
+        return { success: true, data };
+      }
     }
+    return { error: '找不到資料：' + key };
+  });
+}
+
+// 客戶改名時，把「工作項目」中舊客戶名一併換成新名（一次性批次寫入）
+function renameCustomerInItems(oldName, newName) {
+  const sheet = ss.getSheetByName('工作項目');
+  if (!sheet) return;
+  const all = sheet.getDataRange().getValues();
+  const col = (all[0] || []).indexOf('客戶');
+  if (col < 0 || all.length < 2) return;
+  const colVals = [];
+  let changed = false;
+  for (let i = 1; i < all.length; i++) {
+    const v = String(all[i][col]);
+    if (v === oldName) { colVals.push([newName]); changed = true; }
+    else colVals.push([all[i][col]]);
   }
-  return { error: '找不到資料：' + key };
+  if (!changed) return;
+  sheet.getRange(2, col + 1, colVals.length, 1).setValues(colVals);
+  invalidateCache('工作項目');
 }
 
 // ── 通用：刪除一列（以第一欄主鍵比對）───────
 function deleteRow(sheetName, key) {
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return { error: '工作表不存在：' + sheetName };
-  const all = sheet.getDataRange().getValues();
-  for (let i = 1; i < all.length; i++) {
-    if (String(all[i][0]) === String(key)) {
-      sheet.deleteRow(i + 1);
-      return { success: true };
+  return withLock(function () {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return { error: '工作表不存在：' + sheetName };
+    const all = sheet.getDataRange().getValues();
+    for (let i = 1; i < all.length; i++) {
+      if (String(all[i][0]) === String(key)) {
+        sheet.deleteRow(i + 1);
+        invalidateCache(sheetName);
+        return { success: true };
+      }
     }
-  }
-  return { error: '找不到資料：' + key };
+    // 已經不存在：視為刪除成功（冪等），讓前端重試不會卡在「找不到資料」
+    return { success: true, alreadyDeleted: true };
+  });
 }
 
 // ── 設定：讀取 ──────────────────────────────
@@ -561,6 +663,7 @@ function saveSettings(data) {
     for (let i = 0; i < rows.length; i++) {
       if (rows[i][0] === k) {
         sheet.getRange(i + 1, 2).setValue(v);
+        invalidateCache('設定');
         found = true;
         break;
       }
@@ -787,6 +890,7 @@ function uploadItemPhoto(itemId, base64, fileName) {
       break;
     }
   }
+  invalidateCache('工作項目');
   return { success: true, url: imageUrl };
 }
 
@@ -823,6 +927,7 @@ function uploadRefPhoto(itemId, base64, fileName) {
       break;
     }
   }
+  invalidateCache('工作項目');
   return { success: true, url: imageUrl };
 }
 
