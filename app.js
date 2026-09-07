@@ -51,7 +51,7 @@ let state = {
   settings: {},
   viewCustomer: null, // 目前查看的客戶名稱
   viewWorker: null,   // 目前查看的師傅（進行中依師傅分組時）
-  viewSection: null,  // 從哪個區塊進入（active/done/invoiced/paid）
+  viewSection: null,  // 從哪個區塊進入（active/done/delivered/invoiced/paid）
   editCustomer: null,
   loading: false,
   search: '',
@@ -430,7 +430,9 @@ function normalizeItem(it) {
     開單日期:   formatDate(it['開單日期']),
     交貨期限:   formatDate(it['交貨期限']),
     完工日期:   formatDate(it['完工日期']),
+    交貨日期:   formatDate(it['交貨日期']),
     進度:         it['進度']         || '待施工',
+    交貨狀態:     it['交貨狀態']     || '未交貨',
     收款狀態:     it['收款狀態']     || '未收款',
     請款單狀態:   it['請款單狀態']   || '',
     費用類型:     it['費用類型']     || '',
@@ -501,7 +503,7 @@ function render() {
       app.innerHTML = renderOrders();
       break;
     case 'customerDetail': {
-      const sectionLabel = { active:'進行中', done:'完工交貨', invoiced:'已開請款單', paid:'已交貨收款' };
+      const sectionLabel = { active:'進行中', done:'已完工待交貨', delivered:'已交貨待請款', invoiced:'已開請款單', paid:'已收款' };
       const secTag = state.viewSection ? ` · ${sectionLabel[state.viewSection]||''}` : '';
       title.textContent = (state.viewCustomer || state.viewWorker || '工作項目') + secTag;
       back.classList.remove('hidden');
@@ -539,8 +541,13 @@ function render() {
   }
 }
 
-// ── 訂單列表（四摺疊區塊）──────────────────
-const sectionOpen = { active: true, done: false, invoiced: false, paid: false };
+// 交貨與完工是兩件事：進度＝工坊做完沒，交貨＝東西交到客戶手上沒
+function isDelivered(it) {
+  return String(it['交貨狀態'] || '').trim() === '已交貨';
+}
+
+// ── 訂單列表（五摺疊區塊）──────────────────
+const sectionOpen = { active: true, done: false, delivered: false, invoiced: false, paid: false };
 
 function toggleSection(key) {
   sectionOpen[key] = !sectionOpen[key];
@@ -584,11 +591,12 @@ function renderOrdersContent() {
     (it['訂單編號']||'').toLowerCase().includes(q);
 
   const items = visibleItems();
-  // 四類
-  const activeItems   = items.filter(it => it['進度'] !== '完成' && matchItem(it));
-  const doneItems     = items.filter(it => it['進度'] === '完成' && !it['請款單狀態'] && it['收款狀態'] !== '已收款' && matchItem(it));
-  const invoicedItems = items.filter(it => it['進度'] === '完成' && it['請款單狀態'] === '已開單' && it['收款狀態'] !== '已收款' && matchItem(it));
-  const paidItems     = items.filter(it => it['收款狀態'] === '已收款' && matchItem(it));
+  // 五類（互斥）：進行中 → 已完工待交貨 → 已交貨待請款 → 已開請款單 → 已收款
+  const activeItems    = items.filter(it => it['進度'] !== '完成' && matchItem(it));
+  const doneItems      = items.filter(it => it['進度'] === '完成' && !isDelivered(it) && !it['請款單狀態'] && it['收款狀態'] !== '已收款' && matchItem(it));
+  const deliveredItems = items.filter(it => it['進度'] === '完成' &&  isDelivered(it) && !it['請款單狀態'] && it['收款狀態'] !== '已收款' && matchItem(it));
+  const invoicedItems  = items.filter(it => it['進度'] === '完成' && it['請款單狀態'] === '已開單' && it['收款狀態'] !== '已收款' && matchItem(it));
+  const paidItems      = items.filter(it => it['收款狀態'] === '已收款' && matchItem(it));
 
   // 依交貨期限排序進行中
   activeItems.sort((a, b) => {
@@ -712,13 +720,16 @@ function renderOrdersContent() {
   ${activeHeader}
   ${activeBody}
 
-  ${sectionHeader('完工交貨（未開請款單）', doneItems.length, 'done')}
-  ${sectionBody(doneItems, 'done', '暫無待開請款單工作', 'done')}
+  ${sectionHeader('已完工待交貨', doneItems.length, 'done')}
+  ${sectionBody(doneItems, 'done', '暫無待交貨工作', 'done')}
+
+  ${sectionHeader('已交貨待請款', deliveredItems.length, 'delivered')}
+  ${sectionBody(deliveredItems, 'delivered', '暫無待開請款單工作', 'delivered')}
 
   ${sectionHeader('已開請款單（未收款）', invoicedItems.length, 'invoiced')}
   ${sectionBody(invoicedItems, 'invoiced', '暫無已開請款單工作', 'invoiced')}
 
-  ${sectionHeader('已交貨收款', paidItems.length, 'paid')}
+  ${sectionHeader('已收款', paidItems.length, 'paid')}
   ${sectionBody(paidItems, 'paid', '暫無已收款工作', 'paid')}`;
 }
 
@@ -753,10 +764,11 @@ function renderCustomerDetail() {
 
   // 依進入的區塊篩選品項
   const sectionFilter = {
-    active:   it => it['進度'] !== '完成',
-    done:     it => it['進度'] === '完成' && !it['請款單狀態'] && it['收款狀態'] !== '已收款',
-    invoiced: it => it['進度'] === '完成' && it['請款單狀態'] === '已開單' && it['收款狀態'] !== '已收款',
-    paid:     it => it['收款狀態'] === '已收款',
+    active:    it => it['進度'] !== '完成',
+    done:      it => it['進度'] === '完成' && !isDelivered(it) && !it['請款單狀態'] && it['收款狀態'] !== '已收款',
+    delivered: it => it['進度'] === '完成' &&  isDelivered(it) && !it['請款單狀態'] && it['收款狀態'] !== '已收款',
+    invoiced:  it => it['進度'] === '完成' && it['請款單狀態'] === '已開單' && it['收款狀態'] !== '已收款',
+    paid:      it => it['收款狀態'] === '已收款',
   };
   const filterFn = section && sectionFilter[section] ? sectionFilter[section] : () => true;
   const worker = state.viewWorker;
@@ -773,10 +785,17 @@ function renderCustomerDetail() {
   const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-600', '完成': 'bg-green-600' };
 
   const sorted = [...its].sort((a, b) => {
-    // 完工區塊：按完工日期新到舊；其他：按開單日期新到舊
-    if (state.viewSection === 'done' || state.viewSection === 'invoiced' || state.viewSection === 'paid') {
+    // 待交貨區塊：按完工日期新到舊
+    if (state.viewSection === 'done') {
       const da = a['完工日期'] ? new Date(a['完工日期']) : new Date(0);
       const db = b['完工日期'] ? new Date(b['完工日期']) : new Date(0);
+      return db - da;
+    }
+    // 已交貨之後的區塊：按交貨日期新到舊（沒填就退回完工日期）
+    if (state.viewSection === 'delivered' || state.viewSection === 'invoiced' || state.viewSection === 'paid') {
+      const ref = it => it['交貨日期'] || it['完工日期'];
+      const da = ref(a) ? new Date(ref(a)) : new Date(0);
+      const db = ref(b) ? new Date(ref(b)) : new Date(0);
       return db - da;
     }
     const da = a['開單日期'] ? new Date(a['開單日期']) : new Date(0);
@@ -787,8 +806,9 @@ function renderCustomerDetail() {
   const itemCards = sorted.map(it => {
     const prog  = it['進度'] || '待施工';
     const color = progColor[prog] || 'bg-gray-600';
-    const payColor = it['收款狀態'] === '已收款' ? 'bg-green-700' : 'bg-red-900';
-    const showInvSel = section === 'done' && isAdmin();
+    const payColor   = it['收款狀態'] === '已收款' ? 'bg-green-700' : 'bg-red-900';
+    const delivColor = isDelivered(it) ? 'bg-emerald-700' : 'bg-gray-600';
+    const showInvSel = section === 'delivered' && isAdmin();
     const feeType = it['費用類型'] || '';
     const feeChip = feeType
       ? `<span class="text-xs px-1.5 py-0.5 rounded ${feeType==='接單'?'bg-teal-800 text-teal-200':(feeType==='傭金'?'bg-indigo-900 text-indigo-200':'bg-amber-900 text-amber-200')}">${feeType}</span>`
@@ -825,6 +845,7 @@ function renderCustomerDetail() {
           ${it['最後修改人'] ? `<div class="text-xs text-yellow-600 mb-1">最後修改：${it['最後修改人']}${it['最後修改時間'] ? ' · ' + String(it['最後修改時間']).slice(0,16) : ''}</div>` : ''}
           ${it['備註'] ? `<div class="text-xs text-gray-500 mb-1">備註：${it['備註']}</div>` : ''}
           ${it['完工日期'] ? `<div class="text-xs text-amber-400 mb-1">完工：${it['完工日期']}</div>` : ''}
+          ${it['交貨日期'] ? `<div class="text-xs text-emerald-400 mb-1">交貨：${it['交貨日期']}</div>` : ''}
           ${it['請款單狀態'] === '已開單' ? `<div class="text-xs text-blue-400 mb-1">請款單已開</div>` : ''}
           ${(() => {
             const refs = String(it['參考圖片']||'').split(',').filter(u=>u.trim());
@@ -846,12 +867,18 @@ function renderCustomerDetail() {
               <option value="完成"   ${prog==='完成'?'selected':''}>完成</option>
             </select>
             ${isAdmin() ? `
+            <select onchange="setDelivery('${it['工作ID']}',this.value)"
+              class="${delivColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
+              <option value="未交貨" ${!isDelivered(it)?'selected':''}>未交貨</option>
+              <option value="已交貨" ${isDelivered(it)?'selected':''}>已交貨</option>
+            </select>
             <select onchange="updateItemField('${it['工作ID']}','收款狀態',this.value)"
               class="${payColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer w-auto">
               <option value="未收款" ${(it['收款狀態']||'未收款')==='未收款'?'selected':''}>未收款</option>
               <option value="已收款" ${it['收款狀態']==='已收款'?'selected':''}>已收款</option>
             </select>
             ` : `
+            <span class="${delivColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${isDelivered(it)?'已交貨':'未交貨'}</span>
             <span class="${payColor} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${it['收款狀態']||'未收款'}</span>
             `}
           </div>
@@ -866,11 +893,23 @@ function renderCustomerDetail() {
     </div>`;
   }).join('');
 
-  // 底部按鈕：done 區塊顯示「開請款單」；done/invoiced 區塊顯示「批量收款」
-  const isDone     = state.viewSection === 'done';
-  const isInvoiced = state.viewSection === 'invoiced';
+  // 底部按鈕：done 區塊顯示「批量交貨」；delivered 區塊顯示「開請款單」；delivered/invoiced 區塊顯示「批量收款」
+  const isDone      = state.viewSection === 'done';
+  const isDelivSec  = state.viewSection === 'delivered';
+  const isInvoiced  = state.viewSection === 'invoiced';
   let actionBtns = '';
   if (isDone && its.length > 0 && isAdmin()) {
+    const undelivered = its.filter(it => !isDelivered(it)).map(it => it['工作ID']);
+    if (undelivered.length > 0) {
+      const idsArg = "[" + undelivered.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
+      actionBtns += `<button class="btn btn-ghost text-sm w-full"
+        style="background:#047857;color:#fff;"
+        onclick="batchMarkDelivered(${idsArg})">
+        🚚 批量標記已交貨（${undelivered.length} 件）
+      </button>`;
+    }
+  }
+  if (isDelivSec && its.length > 0 && isAdmin()) {
     const total = its.reduce((s, it) => s + Number(it['金額'] || 0), 0);
     actionBtns += `
     <div class="flex justify-between items-center mb-1">
@@ -882,7 +921,7 @@ function renderCustomerDetail() {
       開請款單（${its.length} 件 · $${total.toLocaleString()}）
     </button>`;
   }
-  if ((isDone || isInvoiced) && its.length > 0) {
+  if ((isDelivSec || isInvoiced) && its.length > 0) {
     const unpaidIds = its.filter(it => it['收款狀態'] !== '已收款').map(it => it['工作ID']);
     if (unpaidIds.length > 0) {
       const idsArg = "[" + unpaidIds.map(id => "'" + String(id).replace(/'/g, "\\'") + "'").join(",") + "]";
@@ -940,6 +979,75 @@ async function cycleProgress(itemId, newProg) {
       it['完工日期'] = r.data['完工日期'];
       saveCache();
     }
+  }
+}
+
+// ── 交貨狀態更新（樂觀更新，自動交貨日期）──
+// 交貨與進度是兩條線：這裡只動交貨欄位，不影響完工日期與抽成結算基準
+async function setDelivery(itemId, newState) {
+  const it = state.items.find(x => String(x['工作ID']) === String(itemId));
+  if (!it) return;
+  const prevState = it['交貨狀態'];
+  const prevDate  = it['交貨日期'];
+  it['交貨狀態'] = newState;
+  const data = { '交貨狀態': newState };
+
+  // 前端也自動填交貨日期（後端亦會填，確保一致）；取消交貨就清掉日期
+  if (newState === '已交貨' && !it['交貨日期']) {
+    const today = todayStr();
+    it['交貨日期'] = today;
+    data['交貨日期'] = today;
+  } else if (newState === '未交貨') {
+    it['交貨日期'] = '';
+    data['交貨日期'] = '';
+  }
+
+  stampLocalModify(it);
+  showView('customerDetail', state.viewCustomer);
+  saveCache();
+  const r = await api('update', '工作項目', { key: itemId, data });
+  if (r.error) {
+    it['交貨狀態'] = prevState;
+    it['交貨日期'] = prevDate;
+    showView('customerDetail', state.viewCustomer);
+    saveCache();
+    showToast('更新失敗，已還原', 'error');
+  } else {
+    showToast(newState === '已交貨' ? '已標記交貨 ✓' : '已改回未交貨');
+  }
+}
+
+// 批量標記交貨：整批出貨時一次處理，逐筆確認，失敗的還原
+async function batchMarkDelivered(itemIds) {
+  if (!itemIds.length) return;
+  if (!confirm(`確定將 ${itemIds.length} 件標記為已交貨？交貨日期會填今天。`)) return;
+  const today = todayStr();
+  const prevs = {};
+  itemIds.forEach(id => {
+    const it = state.items.find(x => String(x['工作ID']) === String(id));
+    if (!it) return;
+    prevs[id] = { 交貨狀態: it['交貨狀態'], 交貨日期: it['交貨日期'] };
+    it['交貨狀態'] = '已交貨';
+    if (!it['交貨日期']) it['交貨日期'] = today;
+  });
+  showView('customerDetail', state.viewCustomer);
+  saveCache();
+  showToast(`正在更新 ${itemIds.length} 件...`);
+  const results = await Promise.all(itemIds.map(id =>
+    api('update', '工作項目', { key: id, data: { '交貨狀態': '已交貨' } })
+      .then(r => ({ id, ok: !!(r && !r.error) }))
+  ));
+  const failed = results.filter(r => !r.ok);
+  if (failed.length) {
+    failed.forEach(f => {
+      const it = state.items.find(x => String(x['工作ID']) === String(f.id));
+      if (it && prevs[f.id]) Object.assign(it, prevs[f.id]);
+    });
+    saveCache();
+    showView('customerDetail', state.viewCustomer);
+    showToast(`${itemIds.length - failed.length} 件成功、${failed.length} 件失敗（已還原，請重試）`, 'error');
+  } else {
+    showToast(`已標記交貨（${itemIds.length} 件）`);
   }
 }
 
@@ -1135,7 +1243,7 @@ function duplicateItem(id) {
         <button onclick="stepDup('${id}',1)" class="btn btn-ghost text-sm px-3 py-1">＋</button>
       </div>
     </div>
-    <div class="text-xs text-gray-500 mt-1">複本會複製內容與費用設定，進度重設為待施工、清空完工/收款</div>
+    <div class="text-xs text-gray-500 mt-1">複本會複製內容與費用設定，進度重設為待施工、清空完工/交貨/收款</div>
     <div class="flex gap-2 mt-2">
       <button onclick="closeDup('${id}')" class="btn btn-ghost text-sm flex-1">取消</button>
       <button onclick="confirmDuplicate('${id}',this)" class="btn btn-primary text-sm flex-1">建立複本</button>
@@ -1177,6 +1285,8 @@ async function confirmDuplicate(id, btn) {
     '交貨期限':     src['交貨期限'] || '',
     '進度':         '待施工',
     '完工日期':     '',
+    '交貨狀態':     '未交貨',
+    '交貨日期':     '',
     '收款狀態':     '未收款',
     '車號':         src['車號'] || '',
     '負責師傅':     src['負責師傅'] || '',
@@ -1730,6 +1840,8 @@ async function saveNewItems(btn) {
     '開單日期':   openDate,
     '進度':       '待施工',
     '完工日期':   '',
+    '交貨狀態':   '未交貨',
+    '交貨日期':   '',
     '收款狀態':   '未收款',
     '完工照片':   '',
     '參考圖片':   '',
