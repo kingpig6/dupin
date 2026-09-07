@@ -13,7 +13,9 @@ const SHEET_ID = '1P0a6jPoozsvuoemsQS9b3Pcpb3M7KWfNGahEUWT2NLU';
 const ss = SpreadsheetApp.openById(SHEET_ID);
 
 // ── 工作表欄位定義 ──────────────────────────
-// 工作項目：工作ID|訂單編號|客戶|開單日期|品名|規格|數量|單價|金額|交貨期限|進度|完工日期|收款狀態|車號|負責師傅|備註|完工照片|請款單狀態|費用類型|費用金額|費用支付狀態|費用支付日期|參考圖片|返還金額|最後修改人|最後修改時間
+// 工作項目：工作ID|訂單編號|客戶|開單日期|品名|規格|數量|單價|金額|交貨期限|進度|完工日期|交貨狀態|交貨日期|收款狀態|車號|負責師傅|備註|完工照片|請款單狀態|費用類型|費用金額|費用支付狀態|費用支付日期|參考圖片|返還金額|最後修改人|最後修改時間
+//   進度＝工坊施工狀態（待施工/施工中/完成）；交貨狀態＝東西有沒有交到客戶手上（未交貨/已交貨），兩者獨立
+//   ※ 交貨狀態／交貨日期 兩欄若表頭不存在，第一次更新時會自動補上（見 ensureItemColumns）
 //   費用類型：傭金(固定) / 抽成(金額×抽成比例) / 接單(抽成，但需返還公司 金額×接單返還比例)
 // 客戶：客戶名稱|聯絡人|電話|統一編號|地址|備註
 // 員工：email|姓名|角色|抽成比例|接單返還比例
@@ -94,6 +96,12 @@ function handleRequest(e) {
         if (action === 'delete' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         if (action === 'notifyPayout' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         if (action === 'generateInvoice' && body.type === 'invoice' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
+        // 交貨只有老闆能標記：員工送來的交貨欄位一律剔除，不讓前端被繞過
+        if (sheet === '工作項目' && role !== 'admin') {
+          if (body.data) { delete body.data['交貨狀態']; delete body.data['交貨日期']; }
+          if (body.rows) body.rows.forEach(r => { delete r['交貨狀態']; delete r['交貨日期']; });
+        }
+
         // 員工（非 admin）開單時，負責師傅只能填自己或留空，避免指派給別人
         if (sheet === '工作項目' && role !== 'admin') {
           const myName = roleInfo.name || '';
@@ -348,8 +356,10 @@ function buildCustomerViewHtml(token) {
 
   const customers = data.customers;
   const items = data.items;
-  const activeItems = items.filter(it => it['進度'] !== '完成');
-  const doneItems   = items.filter(it => it['進度'] === '完成');
+  const isDelivered = it => it['交貨狀態'] === '已交貨';
+  const activeItems    = items.filter(it => it['進度'] !== '完成');
+  const doneItems      = items.filter(it => it['進度'] === '完成' && !isDelivered(it));
+  const deliveredItems = items.filter(it => it['進度'] === '完成' && isDelivered(it));
 
   const progColor = { '待施工': '#4b5563', '施工中': '#1d4ed8', '完成': '#15803d' };
 
@@ -374,8 +384,12 @@ function buildCustomerViewHtml(token) {
               <div style="color:#9ca3af;font-size:12px;margin-top:3px;">${it['數量']} × $${Number(it['單價']).toLocaleString()}</div>
               ${it['交貨期限']?`<div style="color:#9ca3af;font-size:12px;margin-top:2px;">預計交期：${it['交貨期限']}</div>`:''}
               ${it['完工日期']?`<div style="color:#f59e0b;font-size:12px;margin-top:2px;">完工：${it['完工日期']}</div>`:''}
+              ${it['交貨日期']?`<div style="color:#34d399;font-size:12px;margin-top:2px;">交貨：${formatDateGs(it['交貨日期'])}</div>`:''}
               ${it['備註']?`<div style="color:#9ca3af;font-size:12px;margin-top:2px;">備註：${it['備註']}</div>`:''}
-              <div style="margin-top:8px;"><span style="background:${bg};color:#fff;font-size:11px;padding:2px 10px;border-radius:99px;font-weight:600;">${prog}</span></div>
+              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                <span style="background:${bg};color:#fff;font-size:11px;padding:2px 10px;border-radius:99px;font-weight:600;">${prog}</span>
+                ${it['交貨狀態']==='已交貨'?`<span style="background:#047857;color:#fff;font-size:11px;padding:2px 10px;border-radius:99px;font-weight:600;">已交貨</span>`:''}
+              </div>
             </div>
             ${amt?`<div style="color:#f59e0b;font-weight:700;margin-left:12px;white-space:nowrap;">$${amt.toLocaleString()}</div>`:''}
           </div>
@@ -409,14 +423,16 @@ function buildCustomerViewHtml(token) {
   </div>
   <div class="section-label">進行中（${activeItems.length}）</div>
   ${renderGroup(activeItems)}
-  <div class="section-label">完工待收款（${doneItems.length}）</div>
+  <div class="section-label">已完工待交貨（${doneItems.length}）</div>
   ${renderGroup(doneItems)}
+  <div class="section-label">已交貨待收款（${deliveredItems.length}）</div>
+  ${renderGroup(deliveredItems)}
   <div class="footer">獨品工坊客製彩繪 · 僅供訂單查詢</div>
 </div>
 </body></html>`;
 }
 
-// ── 客戶查詢連結：用 token 取得指定客戶的進行中+完工未收款項目 ──
+// ── 客戶查詢連結：用 token 取得指定客戶的進行中＋完工／交貨未收款項目 ──
 function getCustomerView(token) {
   if (!token) return { error: 'Missing token' };
   const link = readSheetCached('客戶連結');
@@ -435,7 +451,7 @@ function getCustomerView(token) {
   if (!cached) return { error: '找不到工作項目工作表' };
   const headers = cached.headers;
 
-  const visible = ['工作ID','訂單編號','客戶','開單日期','品名','規格','數量','單價','金額','交貨期限','進度','完工日期','收款狀態','車號','備註','參考圖片'];
+  const visible = ['工作ID','訂單編號','客戶','開單日期','品名','規格','數量','單價','金額','交貨期限','進度','完工日期','交貨狀態','交貨日期','收款狀態','車號','備註','參考圖片'];
 
   // 先用欄位索引篩掉不相關的列，再組物件；原本每列都先建 26 欄物件再丟掉，很浪費
   const cusSet = {};
@@ -533,6 +549,7 @@ function addRow(sheetName, data, user) {
   return withLock(function () {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) return { error: '工作表不存在：' + sheetName };
+    if (sheetName === '工作項目') ensureItemColumns(sheet);
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     if (user && headers.indexOf('建立者') >= 0 && !data['建立者']) {
       data['建立者'] = user.name || user.email;
@@ -562,6 +579,7 @@ function addRows(sheetName, rowsData, user) {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) return { error: '工作表不存在：' + sheetName };
     if (!rowsData || !rowsData.length) return { success: true, count: 0 };
+    if (sheetName === '工作項目') ensureItemColumns(sheet);
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     const creator = user ? (user.name || user.email) : '';
 
@@ -590,11 +608,26 @@ function addRows(sheetName, rowsData, user) {
   });
 }
 
+// 「工作項目」若缺少後來新增的欄位（交貨狀態／交貨日期），自動補上表頭，
+// 否則 updateRow 依表頭對應寫入時，這些欄位會被靜靜丟掉
+function ensureItemColumns(sheet) {
+  const need = ['交貨狀態', '交貨日期'];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const missing = need.filter(h => headers.indexOf(h) === -1);
+  if (!missing.length) return false;
+  sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
+  return true;
+}
+
 // ── 通用：更新一列（以第一欄主鍵比對）───────
 function updateRow(sheetName, key, data) {
   return withLock(function () {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) return { error: '工作表不存在：' + sheetName };
+    if (sheetName === '工作項目' &&
+        (data['交貨狀態'] !== undefined || data['交貨日期'] !== undefined)) {
+      ensureItemColumns(sheet);
+    }
     const all = sheet.getDataRange().getValues();
     const headers = all[0];
 
@@ -607,6 +640,21 @@ function updateRow(sheetName, key, data) {
           data['完工日期'] = new Date().toISOString().slice(0, 10);
         }
       }
+    }
+
+    // 當交貨狀態改為「已交貨」且尚無交貨日期時，自動寫入今天
+    if (sheetName === '工作項目' && data['交貨狀態'] === '已交貨' && !data['交貨日期']) {
+      const rowIdx = all.findIndex((r, i) => i > 0 && String(r[0]) === String(key));
+      if (rowIdx > 0) {
+        const deliveredCol = headers.indexOf('交貨日期');
+        if (deliveredCol >= 0 && !all[rowIdx][deliveredCol]) {
+          data['交貨日期'] = new Date().toISOString().slice(0, 10);
+        }
+      }
+    }
+    // 取消交貨時一併清掉交貨日期，避免留下矛盾的日期
+    if (sheetName === '工作項目' && data['交貨狀態'] === '未交貨' && data['交貨日期'] === undefined) {
+      data['交貨日期'] = '';
     }
 
     for (let i = 1; i < all.length; i++) {
@@ -1078,6 +1126,55 @@ function importHakerJune2026() {
 }
 
 // ── 哈客 2026-06 訂單匯入 END ────────────────
+// ── 一次性：既有資料補上交貨狀態 ──────────────
+// 使用方式：在 Apps Script 介面選擇 backfillDelivery，按執行（只需跑一次）
+// 規則：已開請款單或已收款者視為「已交貨」（交貨日期沿用完工日期），其餘一律「未交貨」。
+// 已經有交貨狀態的列不會被覆蓋，重複執行是安全的。
+function backfillDelivery() {
+  const sheet = ss.getSheetByName('工作項目');
+  if (!sheet) { Logger.log('找不到工作項目工作表'); return '找不到工作項目工作表'; }
+  ensureItemColumns(sheet);
+
+  const all      = sheet.getDataRange().getValues();
+  const headers  = all[0];
+  const cState   = headers.indexOf('交貨狀態');
+  const cDate    = headers.indexOf('交貨日期');
+  const cDone    = headers.indexOf('完工日期');
+  const cInvoice = headers.indexOf('請款單狀態');
+  const cPaid    = headers.indexOf('收款狀態');
+  if (cState < 0 || cDate < 0) { Logger.log('缺少交貨欄位'); return '缺少交貨欄位'; }
+
+  let delivered = 0, pending = 0;
+  const stateCol = [], dateCol = [];
+  for (let i = 1; i < all.length; i++) {
+    const row = all[i];
+    if (String(row[cState] || '').trim()) {          // 已標記過就保留原值
+      stateCol.push([row[cState]]);
+      dateCol.push([row[cDate]]);
+      continue;
+    }
+    const invoiced = cInvoice >= 0 && String(row[cInvoice] || '').trim() === '已開單';
+    const paid     = cPaid    >= 0 && String(row[cPaid]    || '').trim() === '已收款';
+    if (invoiced || paid) {
+      stateCol.push(['已交貨']);
+      dateCol.push([cDone >= 0 && row[cDone] ? formatDateGs(row[cDone]) : '']);
+      delivered++;
+    } else {
+      stateCol.push(['未交貨']);
+      dateCol.push([row[cDate] || '']);
+      pending++;
+    }
+  }
+  if (stateCol.length) {
+    sheet.getRange(2, cState + 1, stateCol.length, 1).setValues(stateCol);
+    sheet.getRange(2, cDate  + 1, dateCol.length,  1).setValues(dateCol);
+  }
+  invalidateCache('工作項目');
+  const msg = `補資料完成！已交貨 ${delivered} 筆、未交貨 ${pending} 筆。`;
+  Logger.log(msg);
+  return msg;
+}
+
 // 使用方式：在 Apps Script 介面選擇 migrateToWorkItems，按執行
 function migrateToWorkItems() {
   const HEADERS = [

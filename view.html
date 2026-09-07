@@ -106,8 +106,10 @@ async function load() {
   document.title = '獨品工坊 · ' + data.customers.join('、');
 
   const items = data.items;
-  const activeItems = items.filter(it => it['進度'] !== '完成');
-  const doneItems   = items.filter(it => it['進度'] === '完成');
+  const isDelivered = it => String(it['交貨狀態'] || '').trim() === '已交貨';
+  const activeItems    = items.filter(it => it['進度'] !== '完成');
+  const doneItems      = items.filter(it => it['進度'] === '完成' && !isDelivered(it));
+  const deliveredItems = items.filter(it => it['進度'] === '完成' &&  isDelivered(it));
 
   const progColor = { '待施工': 'bg-gray-600', '施工中': 'bg-blue-700', '完成': 'bg-green-700' };
 
@@ -162,6 +164,7 @@ async function load() {
                 </div>
                 ${it['交貨期限'] ? `<div class="text-xs text-gray-500 mt-0.5">預計交期：${it['交貨期限']}</div>` : ''}
                 ${it['完工日期'] ? `<div class="text-xs text-amber-400 mt-0.5">完工：${it['完工日期']}</div>` : ''}
+                ${it['交貨日期'] ? `<div class="text-xs text-emerald-400 mt-0.5">交貨：${it['交貨日期']}</div>` : ''}
                 ${it['備註'] ? `<div class="text-xs text-gray-500 mt-0.5">備註：${it['備註']}</div>` : ''}
                 ${(() => {
                   const refs = String(it['參考圖片']||'').split(',').map(u=>u.trim()).filter(Boolean);
@@ -171,8 +174,9 @@ async function load() {
                       ${refs.map(u=>`<a href="${u}" target="_blank"><img src="${thumbUrl(u)}" loading="lazy" decoding="async" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #374151;"/></a>`).join('')}
                     </div></div>`;
                 })()}
-                <div class="mt-2">
+                <div class="mt-2 flex flex-wrap gap-1">
                   <span class="${color} text-white text-xs px-2 py-0.5 rounded-full font-semibold">${prog}</span>
+                  ${isDelivered(it) ? `<span class="bg-emerald-700 text-white text-xs px-2 py-0.5 rounded-full font-semibold">已交貨</span>` : ''}
                 </div>
               </div>
               ${amt ? `<div class="text-amber-400 font-bold ml-3 shrink-0">$${amt.toLocaleString()}</div>` : ''}
@@ -184,9 +188,9 @@ async function load() {
     }).join('');
   }
 
-  const doneTotal = doneItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
-
-  const activeTotal = activeItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+  const doneTotal      = doneItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+  const deliveredTotal = deliveredItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
+  const activeTotal    = activeItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
   const sectionHeader = (label, count, total, key) => `
     <div class="flex justify-between items-center cursor-pointer py-2 mt-2" onclick="toggleSection('${key}')">
       <span class="section-title mb-0">${label}（${count}）</span>
@@ -199,12 +203,14 @@ async function load() {
   document.getElementById('app').innerHTML = `
     ${sectionHeader('進行中', activeItems.length, activeTotal, 'active')}
     <div id="sec-active">${renderItems(activeItems, 'active')}</div>
-    ${sectionHeader('完工待收款', doneItems.length, doneTotal, 'done')}
+    ${sectionHeader('已完工待交貨', doneItems.length, doneTotal, 'done')}
     <div id="sec-done">${renderItems(doneItems, 'done')}</div>
-    ${doneItems.length ? `
+    ${sectionHeader('已交貨待收款', deliveredItems.length, deliveredTotal, 'delivered')}
+    <div id="sec-delivered">${renderItems(deliveredItems, 'delivered')}</div>
+    ${(doneItems.length || deliveredItems.length) ? `
     <div style="border-top:1px solid #374151;margin-top:4px;padding-top:12px;text-align:right;">
       <span class="text-gray-400 text-sm">應收總金額：</span>
-      <span class="text-amber-400 font-bold text-lg">$${doneTotal.toLocaleString()}</span>
+      <span class="text-amber-400 font-bold text-lg">$${(doneTotal + deliveredTotal).toLocaleString()}</span>
     </div>` : ''}
     <div class="text-center text-xs text-gray-600 mt-8">獨品工坊客製彩繪 · 僅供訂單查詢</div>
   `;
