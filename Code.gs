@@ -85,13 +85,23 @@ function handleRequest(e) {
       return jsonOut({ success: true, email: g.email, name: r.name || g.name, role: r.role, session: signSession(g.email, r.name || g.name, r.role) });
     }
 
-    // 啟用權限控管後：所有寫入/敏感操作需要有效登入與足夠權限
+    // 啟用權限控管後：預設「全部都要登入」，而不是只擋寫入。
+    //
+    // 這裡原本是白名單制（只有 writeActions 要求登入），代表 getAll／getBundle／
+    // getItemsRange／getSettings 未登入也能呼叫，而 filterByRole 收到 null 會直接
+    // 回傳整張表 —— API_URL 與 API_SECRET 都寫在公開的 app.js 裡，等於任何人都能
+    // 讀走工作項目、客戶電話地址、員工抽成比例、匯款帳號。改成預設全擋。
+    //
+    // 例外只有兩個，而且都在這段之前就已經回傳：
+    //   verifyLogin  —— 登入本身（見上方）
+    //   customerView —— 客戶查詢連結，用 token 驗證（見 handleRequest 開頭）
     if (clientId) {
       const role = roleInfo ? roleInfo.role : null;
+      if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
+      if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
+
       const writeActions = ['add','addBatch','update','updateBatch','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto','addFixedExpense','notifyPayout'];
       if (writeActions.indexOf(action) >= 0) {
-        if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
-        if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
         // 僅 admin：刪除、開請款單、結算通知
         if (action === 'delete' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
         if (action === 'notifyPayout' && role !== 'admin') return jsonOut({ error: 'FORBIDDEN' });
