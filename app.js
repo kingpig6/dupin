@@ -3264,7 +3264,9 @@ async function toggleProfitReport() {
   ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
   if (!el.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
-    await ensureStatsRange(from);
+    // 年度圖表要疊去年營收，所以連去年的資料一起補（只會撈一次）
+    const prevYearStart = (new Date().getFullYear() - 1) + '-01-01';
+    await ensureStatsRange(from && from < prevYearStart ? from : prevYearStart);
     el.innerHTML = renderProfitReport(from, to);
   }
 }
@@ -3525,6 +3527,286 @@ function renderWorkerFeePaid(from, to) {
   }).join('');
 }
 
+// ── 年度營收與淨利圖表（損益報告用）─────────────────────
+// 單一 Y 軸：營收、淨利、去年營收都是金額，共用同一個刻度。
+// 顏色經過色盲與對比驗證（深色底 #1f2937）：
+//   營收柱 #c98500、淨利線 #3987e5、去年營收用灰色淡線（比較基準，刻意壓低）
+// App 主色 #f59e0b 亮度超出深色底的容許範圍，只留給文字用。
+const CHART_C = {
+  rev:   '#c98500',   // 今年營收（柱）
+  net:   '#3987e5',   // 今年淨利（線）
+  prev:  '#9ca3af',   // 去年營收（比較基準線）
+  grid:  '#374151',   // 格線：比底色亮一階
+  axis:  '#9ca3af',   // 軸文字
+  surf:  '#1f2937',   // 卡片底色（做間隙與外環用）
+};
+
+// 某一年的每月營收與淨利。定義與損益報告完全一致：
+//   營收 = 完工項目金額（不含接單）＋ 接單已支付的返還
+//   淨利 = 營收 − 已支付的傭金/抽成 − 公司支出
+function monthlyFinance(year) {
+  const rev = new Array(12).fill(0);
+  const fee = new Array(12).fill(0);
+  const exp = new Array(12).fill(0);
+  const mOf = d => {
+    const s = String(d || '');
+    if (s.slice(0, 4) !== String(year)) return -1;
+    const m = Number(s.slice(5, 7));
+    return m >= 1 && m <= 12 ? m - 1 : -1;
+  };
+
+  statsItems().forEach(it => {
+    const m = mOf(it['完工日期']);
+    if (m < 0) return;
+    if (it['進度'] === '完成' && it['費用類型'] !== '接單') {
+      rev[m] += Number(it['金額'] || 0);
+    }
+    if (it['費用類型'] === '接單' && it['費用支付狀態'] === '已支付') {
+      rev[m] += returnAmt(it);
+    }
+    if (it['費用類型'] && it['費用類型'] !== '接單' && it['費用支付狀態'] === '已支付') {
+      fee[m] += commissionAmt(it);
+    }
+  });
+
+  (state.expenses || []).forEach(e => {
+    const m = mOf(String(e['日期'] || '').slice(0, 10));
+    if (m >= 0) exp[m] += Number(e['金額'] || 0);
+  });
+
+  return { rev: rev, net: rev.map((v, i) => v - fee[i] - exp[i]) };
+}
+
+// 取好看的刻度間距（1/2/5 × 10^n）
+function niceStep(range, target) {
+  const raw = range / Math.max(1, target);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  const n = raw / mag;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * mag;
+}
+
+function fmtTick(v) {
+  if (v === 0) return '0';
+  const a = Math.abs(v);
+  if (a >= 10000) {
+    const w = v / 10000;
+    return (Number.isInteger(w) ? w : w.toFixed(1)) + '萬';
+  }
+  return v.toLocaleString();
+}
+
+// 圖表資料暫存，給 hover 提示用
+let _chartData = null;
+
+function renderYearChart() {
+  const now  = new Date();
+  const year = now.getFullYear();
+  // 當年只畫到「這個月」為止：還沒發生的月份不該被畫成 0 或被支出拉出一條負線
+  const upto = now.getMonth() + 1;
+  const cur  = monthlyFinance(year);
+  const prevAvailable = !state.itemsFrom || state.archiveFrom;   // 去年資料是否已在手上
+  const prev = prevAvailable ? monthlyFinance(year - 1) : null;
+
+  _chartData = { year: year, upto: upto, rev: cur.rev, net: cur.net, prev: prev ? prev.rev : null };
+
+  // ── 座標系 ──
+  const W = 720, H = 300;
+  const padL = 54, padR = 14, padT = 18, padB = 30;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const all = cur.rev.slice(0, upto).concat(cur.net.slice(0, upto), prev ? prev.rev : []);
+  const rawMax = Math.max(0, ...all);
+  const rawMin = Math.min(0, ...all);
+  const step = niceStep((rawMax - rawMin) || 1, 4);
+  const yMax = Math.ceil(rawMax / step) * step || step;
+  const yMin = Math.floor(rawMin / step) * step;
+  const y = v => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  const band = plotW / 12;
+  const barW = Math.min(24, band * 0.5);
+  const cx = i => padL + band * i + band / 2;
+
+  // ── 格線與 Y 軸刻度（實線細線，數字用文字色不用資料色）──
+  let grid = '';
+  for (let v = yMin; v <= yMax + 0.5; v += step) {
+    const yy = y(v);
+    const zero = v === 0;
+    grid += `<line x1="${padL}" y1="${yy.toFixed(1)}" x2="${W - padR}" y2="${yy.toFixed(1)}"
+              stroke="${zero ? CHART_C.axis : CHART_C.grid}" stroke-width="1" opacity="${zero ? .6 : 1}"/>
+             <text x="${padL - 8}" y="${(yy + 4).toFixed(1)}" text-anchor="end"
+              fill="${CHART_C.axis}" font-size="11" style="font-variant-numeric:tabular-nums">${fmtTick(v)}</text>`;
+  }
+
+  // ── 柱：≤24px、資料端 4px 圓角、基線切齊；相鄰以底色間隙分隔 ──
+  const y0 = y(0);
+  let bars = '';
+  cur.rev.slice(0, upto).forEach((v, i) => {
+    if (!v) return;
+    const top = y(v), h = Math.max(1, y0 - top), r = Math.min(4, h);
+    const x = cx(i) - barW / 2;
+    bars += `<path d="M${x.toFixed(1)} ${(top + h).toFixed(1)} V${(top + r).toFixed(1)}
+               a${r} ${r} 0 0 1 ${r} -${r} H${(x + barW - r).toFixed(1)}
+               a${r} ${r} 0 0 1 ${r} ${r} V${(top + h).toFixed(1)} Z" fill="${CHART_C.rev}"/>`;
+  });
+
+  // ── 線：2px、圓角接點 ──
+  const path = (arr, n) => arr.slice(0, n).map((v, i) => `${i ? 'L' : 'M'}${cx(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const prevLine = prev
+    ? `<path d="${path(prev.rev, 12)}" fill="none" stroke="${CHART_C.prev}" stroke-width="2"
+        stroke-linejoin="round" stroke-linecap="round" opacity="0.45"/>`
+    : '';
+  const netLine = `<path d="${path(cur.net, upto)}" fill="none" stroke="${CHART_C.net}" stroke-width="2"
+        stroke-linejoin="round" stroke-linecap="round"/>`;
+
+  // ── 直接標籤：只標營收最高的那一個月（規範要求節制，不是每點都標）──
+  const shown = cur.rev.slice(0, upto);
+  const peak = shown.indexOf(Math.max(...shown));
+  const peakLabel = cur.rev[peak] > 0
+    ? `<text x="${cx(peak).toFixed(1)}" y="${(y(cur.rev[peak]) - 8).toFixed(1)}" text-anchor="middle"
+        fill="#e5e7eb" font-size="11" font-weight="700">${fmtTick(cur.rev[peak])}</text>`
+    : '';
+
+  // 淨利線的最後一個有資料的點加端點（2px 底色外環，避免與柱重疊看不清）
+  const lastIdx = upto - 1;
+  const endDot = lastIdx >= 0
+    ? `<circle cx="${cx(lastIdx).toFixed(1)}" cy="${y(cur.net[lastIdx]).toFixed(1)}" r="4"
+        fill="${CHART_C.net}" stroke="${CHART_C.surf}" stroke-width="2"/>`
+    : '';
+
+  // ── X 軸月份 ──
+  let xlab = '';
+  for (let i = 0; i < 12; i++) {
+    xlab += `<text x="${cx(i).toFixed(1)}" y="${H - 10}" text-anchor="middle"
+              fill="${CHART_C.axis}" font-size="11" opacity="${i < upto ? 1 : .35}">${i + 1}</text>`;
+  }
+
+  // ── 命中區：整個月份帶都是熱區，不是只有柱子本身 ──
+  let hit = '';
+  for (let i = 0; i < upto; i++) {
+    hit += `<rect x="${(padL + band * i).toFixed(1)}" y="${padT}" width="${band.toFixed(1)}" height="${plotH}"
+             fill="transparent" tabindex="0"
+             onmouseenter="showChartTip(${i},evt)" onmousemove="showChartTip(${i},evt)"
+             onfocus="showChartTip(${i},evt)" onmouseleave="hideChartTip()" onblur="hideChartTip()"/>`;
+  }
+
+  const legend = `
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400 mt-1">
+      <span class="inline-flex items-center gap-1.5">
+        <span style="width:10px;height:10px;border-radius:2px;background:${CHART_C.rev};display:inline-block"></span>今年營收
+      </span>
+      <span class="inline-flex items-center gap-1.5">
+        <span style="width:14px;height:2px;background:${CHART_C.net};display:inline-block"></span>今年淨利
+      </span>
+      ${prev ? `<span class="inline-flex items-center gap-1.5">
+        <span style="width:14px;height:2px;background:${CHART_C.prev};opacity:.45;display:inline-block"></span>去年營收
+      </span>` : `<button class="text-gray-500 underline" onclick="loadPrevYear(this)">載入去年比較</button>`}
+    </div>`;
+
+  const rows = cur.rev.slice(0, upto).map((v, i) => `
+    <tr>
+      <td class="py-1 text-gray-400">${i + 1} 月</td>
+      <td class="py-1 text-right" style="font-variant-numeric:tabular-nums">$${v.toLocaleString()}</td>
+      <td class="py-1 text-right ${cur.net[i] < 0 ? 'text-red-400' : ''}" style="font-variant-numeric:tabular-nums">$${cur.net[i].toLocaleString()}</td>
+      ${prev ? `<td class="py-1 text-right text-gray-500" style="font-variant-numeric:tabular-nums">$${prev.rev[i].toLocaleString()}</td>` : ''}
+    </tr>`).join('');
+
+  const yearTotal = cur.rev.slice(0, upto).reduce((s, v) => s + v, 0);
+  const netTotal  = cur.net.slice(0, upto).reduce((s, v) => s + v, 0);
+
+  return `
+  <div class="card">
+    <div class="flex justify-between items-start mb-1">
+      <div>
+        <div class="font-semibold">${year} 年度營收與淨利</div>
+        <div class="text-xs text-gray-500">1–${upto} 月累計・不受上方日期篩選影響</div>
+      </div>
+      <div class="text-right shrink-0 ml-2">
+        <div class="text-amber-400 font-bold text-lg">$${yearTotal.toLocaleString()}</div>
+        <div class="text-xs ${netTotal < 0 ? 'text-red-400' : 'text-green-400'}">淨利 $${netTotal.toLocaleString()}</div>
+      </div>
+    </div>
+    <div style="position:relative">
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img"
+           aria-label="${year} 年每月營收與淨利">
+        ${grid}${bars}${prevLine}${netLine}${endDot}${peakLabel}${xlab}${hit}
+      </svg>
+      <div id="chartTip" class="hidden" style="position:absolute;pointer-events:none;z-index:20;
+           background:#111827;border:1px solid #374151;border-radius:8px;padding:8px 10px;
+           font-size:12px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.5)"></div>
+    </div>
+    ${legend}
+    <div class="mt-2">
+      <button class="text-xs text-gray-400 underline"
+        onclick="document.getElementById('chartTable').classList.toggle('hidden')">表格檢視</button>
+      <div id="chartTable" class="hidden mt-2">
+        <table class="w-full text-xs">
+          <thead><tr class="text-gray-500 border-b border-gray-700">
+            <th class="text-left font-normal py-1">月份</th>
+            <th class="text-right font-normal py-1">營收</th>
+            <th class="text-right font-normal py-1">淨利</th>
+            ${prev ? '<th class="text-right font-normal py-1">去年營收</th>' : ''}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+// 一個提示框列出該月所有數列，不必精準指到某條線
+function showChartTip(i, evt) {
+  const tip = document.getElementById('chartTip');
+  if (!tip || !_chartData) return;
+  const d = _chartData;
+  if (i >= d.upto) return;
+  const line = (color, name, val, dim) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:3px';
+    const key = document.createElement('span');
+    key.style.cssText = `width:12px;height:2px;background:${color};flex:none` + (dim ? ';opacity:.45' : '');
+    const v = document.createElement('span');
+    v.style.cssText = 'color:#f3f4f6;font-weight:700';
+    v.textContent = '$' + Number(val).toLocaleString();     // 值在前、名稱其次
+    const n = document.createElement('span');
+    n.style.color = '#9ca3af';
+    n.textContent = name;                                   // textContent，不用字串拼 HTML
+    row.append(key, v, n);
+    return row;
+  };
+  tip.textContent = '';
+  const head = document.createElement('div');
+  head.style.cssText = 'color:#9ca3af;font-size:11px';
+  head.textContent = `${d.year} 年 ${i + 1} 月`;
+  tip.appendChild(head);
+  tip.appendChild(line(CHART_C.rev, '營收', d.rev[i]));
+  tip.appendChild(line(CHART_C.net, '淨利', d.net[i]));
+  if (d.prev) tip.appendChild(line(CHART_C.prev, '去年營收', d.prev[i], true));
+
+  tip.classList.remove('hidden');
+  const box = tip.parentElement.getBoundingClientRect();
+  const x = (evt && evt.clientX != null ? evt.clientX : box.left + box.width / 2) - box.left;
+  const w = tip.offsetWidth;
+  tip.style.left = Math.max(4, Math.min(box.width - w - 4, x - w / 2)) + 'px';
+  tip.style.top = '4px';
+}
+
+function hideChartTip() {
+  document.getElementById('chartTip')?.classList.add('hidden');
+}
+
+// 去年的資料超出載入視窗，需要時才補撈
+async function loadPrevYear(btn) {
+  const from = (new Date().getFullYear() - 1) + '-01-01';
+  if (btn) { btn.disabled = true; btn.textContent = '載入中…'; }
+  await ensureStatsRange(from);
+  const el = document.getElementById('profitReport');
+  if (el && !el.classList.contains('hidden')) {
+    const { from: f, to } = getStatsFilter();
+    el.innerHTML = renderProfitReport(f, to);
+  }
+}
+
 function renderProfitReport(from, to) {
   const inRange = d => d && d >= from && d <= to;
   const rowLine = (left, amt, color) => `
@@ -3614,6 +3896,8 @@ function renderProfitReport(from, to) {
     <div id="${id}" class="hidden mb-3">${body}</div>`;
 
   return `
+  ${renderYearChart()}
+
   <div class="card">
     <div class="flex justify-between items-center mb-3 cursor-pointer" onclick="document.getElementById('pr_income').classList.toggle('hidden')">
       <span class="text-gray-300 font-semibold">收入（完工 ${incomeItems.length} 件・不含接單）</span>
