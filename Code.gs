@@ -88,7 +88,7 @@ function handleRequest(e) {
     // 啟用權限控管後：所有寫入/敏感操作需要有效登入與足夠權限
     if (clientId) {
       const role = roleInfo ? roleInfo.role : null;
-      const writeActions = ['add','addBatch','update','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto','addFixedExpense','notifyPayout'];
+      const writeActions = ['add','addBatch','update','updateBatch','delete','saveSettings','generateInvoice','uploadItemPhoto','uploadRefPhoto','addFixedExpense','notifyPayout'];
       if (writeActions.indexOf(action) >= 0) {
         if (!user)  return jsonOut({ error: 'LOGIN_REQUIRED' });
         if (!role)  return jsonOut({ error: 'NOT_ALLOWED', email: user.email });
@@ -100,6 +100,9 @@ function handleRequest(e) {
         if (sheet === '工作項目' && role !== 'admin') {
           if (body.data) { delete body.data['交貨狀態']; delete body.data['交貨日期']; }
           if (body.rows) body.rows.forEach(r => { delete r['交貨狀態']; delete r['交貨日期']; });
+          if (body.updates) body.updates.forEach(u => {
+            if (u && u.data) { delete u.data['交貨狀態']; delete u.data['交貨日期']; }
+          });
         }
 
         // 員工（非 admin）開單時，負責師傅只能填自己或留空，避免指派給別人
@@ -125,6 +128,7 @@ function handleRequest(e) {
     }
 
     // 工作項目：更新時記錄「最後修改人／時間」（開單人由 建立者 記錄）
+    // updateBatch 的稽核章在 updateRows 內部逐筆蓋，這裡只處理單筆
     if (sheet === '工作項目' && user && action === 'update' && body.data) {
       body.data['最後修改人']   = user.name || user.email;
       body.data['最後修改時間'] = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
@@ -135,9 +139,11 @@ function handleRequest(e) {
       case 'getAll':          result = getAll(sheet, roleInfo); break;
       case 'getBundle':       result = getBundle(roleInfo); break;
       case 'getMyFees':       result = getMyFees(roleInfo); break;
+      case 'getItemsRange':   result = getItemsRange(body.from, body.to, roleInfo); break;
       case 'add':             result = addRow(sheet, body.data, user); break;
       case 'addBatch':        result = addRows(sheet, body.rows, user); break;
       case 'update':          result = updateRow(sheet, body.key, body.data); break;
+      case 'updateBatch':     result = updateRows(sheet, body.updates, user); break;
       case 'delete':          result = deleteRow(sheet, body.key); break;
       case 'getSettings':     result = getSettings(); break;
       case 'saveSettings':    result = saveSettings(body.data); break;
@@ -331,14 +337,17 @@ function verifyIdToken(idToken) {
 }
 
 // ── 查員工角色（員工表：email | 姓名 | 角色）──
+// 每一個請求都要驗身分，原本每次都整張讀「員工」表（一次試算表往返）。
+// 改走快取後，改動員工角色最多 30 秒生效（CACHE_TTL_SEC）；
+// 需要立即生效時，在試算表改完後執行一次 invalidateCache('員工')。
 function getUserRole(email) {
-  const sheet = ss.getSheetByName('員工');
-  if (!sheet) return null;
-  const rows = sheet.getDataRange().getValues();
+  const cached = readSheetCached('員工');
+  if (!cached) return null;
   const target = String(email || '').trim().toLowerCase();
-  for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]).trim().toLowerCase() === target) {
-      return { email: target, name: rows[i][1] || '', role: String(rows[i][2] || 'staff').trim() };
+  for (let i = 0; i < cached.rows.length; i++) {
+    const r = cached.rows[i];
+    if (String(r[0]).trim().toLowerCase() === target) {
+      return { email: target, name: r[1] || '', role: String(r[2] || 'staff').trim() };
     }
   }
   return null;
@@ -475,6 +484,52 @@ function getCustomerView(token) {
 
 // ── 通用：取得整張表 ────────────────────────
 // roleInfo 有值且非 admin（一般員工）時，「工作項目」只回傳尚未指派的進行中項目
+// ── 軟歸檔：日常載入不必把幾年份的工作項目全部送到前端 ──────────
+// 資料完全不搬移，全部留在同一張「工作項目」表；只是 getBundle 預設
+// 只送「未結案 ＋ 最近 N 個月」。要查更早的，前端再打 getItemsRange 補撈。
+// 想恢復成全送，把 ITEM_WINDOW_MONTHS 設成 0 即可。
+const ITEM_WINDOW_MONTHS = 12;
+
+function itemWindowFrom() {
+  if (!ITEM_WINDOW_MONTHS) return '';
+  const d = new Date();
+  d.setMonth(d.getMonth() - ITEM_WINDOW_MONTHS);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+// 一律送（不看日期）：還在流程中、或還沒付掉的費用。
+// 這兩類是日常操作與儀表板「未結傭金」會用到的，漏掉會出錯。
+function itemAlwaysLoaded(r) {
+  if (String(r['收款狀態'] || '').trim() !== '已收款') return true;
+  if (r['費用類型'] && String(r['費用支付狀態'] || '').trim() === '未支付') return true;
+  return false;
+}
+
+// 這筆項目有沒有任何一個日期落在 [from, to]（to 可省略）
+function itemInDateRange(r, from, to) {
+  const ds = [r['完工日期'], r['交貨日期'], r['開單日期']];
+  for (let i = 0; i < ds.length; i++) {
+    if (!ds[i]) continue;
+    const d = formatDateGs(ds[i]);
+    if (!d) continue;
+    if (from && d < from) continue;
+    if (to && d > to) continue;
+    return true;
+  }
+  return false;
+}
+
+// 員工可見範圍：進行中且未指派的項目 ＋ 分配給自己的項目
+function filterByRole(data, roleInfo) {
+  if (!roleInfo || roleInfo.role === 'admin') return data;
+  const myName = String(roleInfo.name || '').trim();
+  return data.filter(r => {
+    const w = String(r['負責師傅'] || '').trim();
+    if (!w) return r['進度'] !== '完成';
+    return myName && w === myName;
+  });
+}
+
 function getAll(sheetName, roleInfo) {
   const cached = readSheetCached(sheetName);
   if (!cached) return { error: '工作表不存在：' + sheetName };
@@ -486,17 +541,33 @@ function getAll(sheetName, roleInfo) {
     return obj;
   });
 
-  if (sheetName === '工作項目' && roleInfo && roleInfo.role !== 'admin') {
-    // 員工可見：進行中且未指派的項目 ＋ 分配給自己的項目
-    const myName = String(roleInfo.name || '').trim();
-    data = data.filter(r => {
-      const w = String(r['負責師傅'] || '').trim();
-      if (!w) return r['進度'] !== '完成';       // 未指派：只看進行中
-      return myName && w === myName;              // 已指派：只看自己的（含完成）
-    });
+  if (sheetName === '工作項目') {
+    data = filterByRole(data, roleInfo);
+    const from = itemWindowFrom();
+    if (from) {
+      data = data.filter(r => itemAlwaysLoaded(r) || itemInDateRange(r, from, ''));
+      return { data: data, itemsFrom: from };
+    }
   }
 
   return { data };
+}
+
+// ── 查歷史：撈出指定期間的工作項目（含已超出載入視窗的舊資料）──
+// 業績／損益報表選到較早的日期時，由前端呼叫這支補齊。
+function getItemsRange(from, to, roleInfo) {
+  if (!from) return { error: '缺少起始日期' };
+  const cached = readSheetCached('工作項目');
+  if (!cached) return { error: '找不到工作項目工作表' };
+  const headers = cached.headers;
+  let data = cached.rows.map(row => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = row[i]; });
+    return obj;
+  });
+  data = filterByRole(data, roleInfo);
+  data = data.filter(r => itemInDateRange(r, from, to || ''));
+  return { data: data, from: from, to: to || '' };
 }
 
 // ── 一次取回前端啟動所需的所有表（取代原本 8 支併發請求）──
@@ -509,6 +580,8 @@ function getBundle(roleInfo) {
   BUNDLE_SHEETS.forEach(function (name) {
     const r = getAll(name, roleInfo);
     out[name] = r && r.data ? r.data : [];
+    // 工作項目有載入視窗：把起點一併帶回，前端才知道何時該補撈歷史
+    if (name === '工作項目' && r && r.itemsFrom) out['_itemsFrom'] = r.itemsFrom;
   });
   const s = getSettings();
   out['設定'] = s && s.data ? s.data : {};
@@ -619,6 +692,27 @@ function ensureItemColumns(sheet) {
   return true;
 }
 
+// 工作項目的自動日期規則（updateRow 與 updateRows 共用，避免兩邊行為分歧）：
+// 進度改「完成」補完工日期、交貨改「已交貨」補交貨日期、改回「未交貨」清掉日期。
+// row 傳入該列目前的值（用來判斷「原本就有日期就不覆蓋」）。
+function applyItemAutoDates(data, row, headers) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (data['進度'] === '完成' && !data['完工日期']) {
+    const c = headers.indexOf('完工日期');
+    if (c >= 0 && !row[c]) data['完工日期'] = today;
+  }
+  if (data['交貨狀態'] === '已交貨' && !data['交貨日期']) {
+    const c = headers.indexOf('交貨日期');
+    if (c >= 0 && !row[c]) data['交貨日期'] = today;
+  }
+  // 取消交貨時一併清掉交貨日期，避免留下矛盾的日期
+  if (data['交貨狀態'] === '未交貨' && data['交貨日期'] === undefined) {
+    data['交貨日期'] = '';
+  }
+  return data;
+}
+
 // ── 通用：更新一列（以第一欄主鍵比對）───────
 function updateRow(sheetName, key, data) {
   return withLock(function () {
@@ -631,34 +725,9 @@ function updateRow(sheetName, key, data) {
     const all = sheet.getDataRange().getValues();
     const headers = all[0];
 
-    // 當進度改為「完成」且尚無完工日期時，自動寫入今天
-    if (sheetName === '工作項目' && data['進度'] === '完成' && !data['完工日期']) {
-      const rowIdx = all.findIndex((r, i) => i > 0 && String(r[0]) === String(key));
-      if (rowIdx > 0) {
-        const completedCol = headers.indexOf('完工日期');
-        if (completedCol >= 0 && !all[rowIdx][completedCol]) {
-          data['完工日期'] = new Date().toISOString().slice(0, 10);
-        }
-      }
-    }
-
-    // 當交貨狀態改為「已交貨」且尚無交貨日期時，自動寫入今天
-    if (sheetName === '工作項目' && data['交貨狀態'] === '已交貨' && !data['交貨日期']) {
-      const rowIdx = all.findIndex((r, i) => i > 0 && String(r[0]) === String(key));
-      if (rowIdx > 0) {
-        const deliveredCol = headers.indexOf('交貨日期');
-        if (deliveredCol >= 0 && !all[rowIdx][deliveredCol]) {
-          data['交貨日期'] = new Date().toISOString().slice(0, 10);
-        }
-      }
-    }
-    // 取消交貨時一併清掉交貨日期，避免留下矛盾的日期
-    if (sheetName === '工作項目' && data['交貨狀態'] === '未交貨' && data['交貨日期'] === undefined) {
-      data['交貨日期'] = '';
-    }
-
     for (let i = 1; i < all.length; i++) {
       if (String(all[i][0]) === String(key)) {
+        if (sheetName === '工作項目') applyItemAutoDates(data, all[i], headers);
         // 一次性寫入整列：原本逐格 setValue 每格都是一次往返，欄位多時非常慢
         const merged = headers.map((h, ci) => data[h] !== undefined ? data[h] : all[i][ci]);
         sheet.getRange(i + 1, 1, 1, headers.length).setValues([merged]);
@@ -671,6 +740,60 @@ function updateRow(sheetName, key, data) {
       }
     }
     return { error: '找不到資料：' + key };
+  });
+}
+
+// ── 批次更新多列：一次拿鎖、一次讀表、連續列合併寫回 ──────────
+// 原本批量收款／批量交貨是前端逐筆打 update，40 件就是 40 次請求，
+// 每次都要重新搶鎖＋整張讀表，實測要一分半。改成一次請求處理完。
+function updateRows(sheetName, updates, user) {
+  return withLock(function () {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return { error: '工作表不存在：' + sheetName };
+    if (!updates || !updates.length) return { success: true, count: 0, missing: [] };
+    if (sheetName === '工作項目') ensureItemColumns(sheet);
+
+    const all = sheet.getDataRange().getValues();
+    const headers = all[0];
+
+    // 主鍵 → 列索引，避免每筆都整張掃一遍
+    const rowOf = {};
+    for (let i = 1; i < all.length; i++) rowOf[String(all[i][0])] = i;
+
+    const stamp = user ? (user.name || user.email) : '';
+    const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+
+    const touched = [];
+    const missing = [];
+    updates.forEach(function (u) {
+      const i = rowOf[String(u.key)];
+      if (i === undefined) { missing.push(u.key); return; }
+      const data = {};
+      Object.keys(u.data || {}).forEach(k => { data[k] = u.data[k]; });
+      if (sheetName === '工作項目') {
+        applyItemAutoDates(data, all[i], headers);
+        if (stamp) { data['最後修改人'] = stamp; data['最後修改時間'] = nowStr; }
+      }
+      headers.forEach((h, ci) => { if (data[h] !== undefined) all[i][ci] = data[h]; });
+      touched.push(i);
+    });
+
+    if (!touched.length) return { success: true, count: 0, missing: missing };
+
+    // 把相鄰的列併成一個區塊寫回，減少 setValues 往返次數
+    touched.sort((a, b) => a - b);
+    let start = touched[0], prev = touched[0];
+    const flush = () => sheet.getRange(start + 1, 1, prev - start + 1, headers.length)
+                             .setValues(all.slice(start, prev + 1));
+    for (let k = 1; k < touched.length; k++) {
+      if (touched[k] === prev + 1) { prev = touched[k]; continue; }
+      flush();
+      start = prev = touched[k];
+    }
+    flush();
+
+    invalidateCache(sheetName);
+    return { success: true, count: touched.length, missing: missing };
   });
 }
 
