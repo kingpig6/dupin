@@ -606,6 +606,40 @@ function render() {
   }
 }
 
+// ── 交貨期限狀態 ──────────────────────────────
+// 只看「還沒完工」的項目：已經做完的不算逾期，交貨與收款有自己的關卡。
+const DUE_SOON_DAYS = 7;
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(String(dateStr).slice(0, 10));
+  if (isNaN(d)) return null;
+  const today = new Date(todayStr());
+  return Math.round((d - today) / 86400000);
+}
+
+// 回傳 'overdue'（已逾期）／'soon'（7 天內到期）／''（還早或沒填期限）
+function dueState(it) {
+  if (!it || it['進度'] === '完成') return '';
+  const n = daysUntil(it['交貨期限']);
+  if (n === null) return '';
+  if (n < 0) return 'overdue';
+  if (n <= DUE_SOON_DAYS) return 'soon';
+  return '';
+}
+
+const DUE_TEXT_CLASS = { overdue: 'text-red-400 font-semibold', soon: 'text-orange-400' };
+
+// 交貨期限要顯示的文字：逾期標幾天、快到期標剩幾天
+function dueLabel(it) {
+  const st = dueState(it);
+  if (!st) return it['交貨期限'] || '';
+  const n = daysUntil(it['交貨期限']);
+  return st === 'overdue'
+    ? `${it['交貨期限']}（逾期 ${Math.abs(n)} 天）`
+    : `${it['交貨期限']}（剩 ${n} 天）`;
+}
+
 // 交貨與完工是兩件事：進度＝工坊做完沒，交貨＝東西交到客戶手上沒
 function isDelivered(it) {
   return String(it['交貨狀態'] || '').trim() === '已交貨';
@@ -622,8 +656,41 @@ function toggleSection(key) {
   if (arrow) arrow.textContent = sectionOpen[key] ? '▲' : '▼';
 }
 
+// 訂單頁頂端的期限提示：有逾期就紅色，只有快到期就橘色，都沒有就不出現。
+// 一併列出是哪幾個客戶，不然只知道「有 3 件」卻不知道去哪找。
+function renderDueBanner() {
+  const items = visibleItems().filter(it => it['進度'] !== '完成');
+  const overdue = items.filter(it => dueState(it) === 'overdue');
+  const soon    = items.filter(it => dueState(it) === 'soon');
+  if (!overdue.length && !soon.length) return '';
+
+  const byCustomer = list => {
+    const map = {};
+    list.forEach(it => { const c = it['客戶'] || '(未知客戶)'; map[c] = (map[c] || 0) + 1; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1])
+      .map(([c, n]) => `${c} ${n}`).join('、');
+  };
+
+  const red = overdue.length > 0;
+  const bg  = red ? '#7f1d1d' : '#7c2d12';      // 逾期深紅／快到期深橘
+  const bd  = red ? '#dc2626' : '#f97316';
+  const main = red
+    ? `⚠️ ${overdue.length} 件已逾期`
+    : `⚠️ ${soon.length} 件 ${DUE_SOON_DAYS} 天內到期`;
+  const sub = red
+    ? byCustomer(overdue) + (soon.length ? `　｜　另有 ${soon.length} 件 ${DUE_SOON_DAYS} 天內到期` : '')
+    : byCustomer(soon);
+
+  return `
+  <div class="mb-3" style="background:${bg};border:1px solid ${bd};border-radius:10px;padding:10px 12px;">
+    <div class="font-bold text-sm" style="color:#fff;">${main}</div>
+    <div class="text-xs mt-0.5" style="color:#fecaca;">${sub}</div>
+  </div>`;
+}
+
 function renderOrders() {
   return `
+  ${renderDueBanner()}
   <div class="relative mb-3">
     <input type="search" placeholder="搜尋客戶、品名、類型、師傅…"
       value="${state.search}"
@@ -940,7 +1007,7 @@ function renderCustomerDetail() {
           <div class="text-xs text-gray-500 mb-1">
             ${it['訂單編號'] || ''}
             ${it['開單日期'] ? ' · 開 ' + it['開單日期'] : ''}
-            ${it['交貨期限'] ? ' · 交 ' + it['交貨期限'] : ''}
+            ${it['交貨期限'] ? ` · 交 <span class="${DUE_TEXT_CLASS[dueState(it)] || ''}">${dueLabel(it)}</span>` : ''}
             ${it['建立者'] ? ' · 開單人 ' + it['建立者'] : ''}
           </div>
           ${it['最後修改人'] ? `<div class="text-xs text-yellow-600 mb-1">最後修改：${it['最後修改人']}${it['最後修改時間'] ? ' · ' + String(it['最後修改時間']).slice(0,16) : ''}</div>` : ''}
@@ -2507,6 +2574,13 @@ function renderStats() {
   <div id="statsResult"></div>
 
   ${isAdmin() ? `
+  <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleArAging()">
+    <span class="section-title mb-0">應收帳齡（完工未收款）</span>
+    <span id="arrow-arAging" class="text-gray-400 text-lg">▼</span>
+  </div>
+  <div id="arAging" class="hidden mb-3"></div>` : ''}
+
+  ${isAdmin() ? `
   <div class="flex items-center justify-between cursor-pointer py-2" onclick="toggleProfitReport()">
     <span class="section-title mb-0">損益報告（老闆專屬）</span>
     <span id="arrow-profitReport" class="text-gray-400 text-lg">▼</span>
@@ -2549,6 +2623,139 @@ function renderStats() {
   </div>
 
   ${renderMealBlock()}`;
+}
+
+// ── 應收帳齡 ──────────────────────────────────
+// 「完工了但錢還沒進來」的每一筆卡了幾天、卡在哪一關。
+// 帳齡一律從完工日期算起（沒有就退回開單日期）：那是這筆錢開始該收的時間點。
+// 目前沒有「請款日期」欄位，所以無法細算請款後又卡了幾天，只能標出卡在哪一關。
+const AR_BUCKETS = [
+  { max: 30,       label: '30 天內',  color: '#6b7280' },
+  { max: 60,       label: '31–60 天', color: '#ca8a04' },
+  { max: 90,       label: '61–90 天', color: '#ea580c' },
+  { max: Infinity, label: '90 天以上', color: '#dc2626' },
+];
+
+function arStage(it) {
+  if (it['請款單狀態'] === '已開單') return '已請款未收';
+  if (isDelivered(it)) return '待請款';
+  return '待交貨';
+}
+
+function arAgeDays(it) {
+  const base = it['完工日期'] || it['開單日期'];
+  const n = daysUntil(base);
+  return n === null ? 0 : Math.max(0, -n);
+}
+
+// 應收＝已完工但尚未收款。未完工的還不算該收的錢。
+function arItems() {
+  return statsItems()
+    .filter(it => it['進度'] === '完成' && it['收款狀態'] !== '已收款')
+    .map(it => ({ it: it, days: arAgeDays(it), amt: Number(it['金額'] || 0) }))
+    .sort((a, b) => b.days - a.days);
+}
+
+async function toggleArAging() {
+  const el = document.getElementById('arAging');
+  const ar = document.getElementById('arrow-arAging');
+  if (!el) return;
+  el.classList.toggle('hidden');
+  ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
+  if (!el.classList.contains('hidden')) el.innerHTML = renderArAging();
+}
+
+function renderArAging() {
+  const rows = arItems();
+  if (!rows.length) return '<p class="text-gray-500 text-sm mb-4">目前沒有未收款的完工項目 🎉</p>';
+
+  const total = rows.reduce((s, r) => s + r.amt, 0);
+  const bucketOf = d => AR_BUCKETS.findIndex(b => d <= b.max);
+
+  // 分桶小計
+  const buckets = AR_BUCKETS.map(() => ({ n: 0, amt: 0 }));
+  rows.forEach(r => { const b = buckets[bucketOf(r.days)]; b.n++; b.amt += r.amt; });
+
+  // 比例用一條堆疊條表示；文字用等寬格子，才不會因為金額小就被擠到重疊或截字
+  const stackBar = AR_BUCKETS.map((b, i) => {
+    const v = buckets[i];
+    if (!v.n) return '';
+    const pct = total ? (v.amt / total * 100) : 0;
+    return `<div style="width:${pct}%;background:${b.color};"></div>`;
+  }).join('<div style="width:2px;background:#1f2937;flex:none;"></div>');
+
+  const bucketLegend = AR_BUCKETS.map((b, i) => {
+    const v = buckets[i];
+    return `<div style="min-width:0;${v.n ? '' : 'opacity:.35;'}">
+      <div class="text-xs text-gray-400" style="white-space:nowrap;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${b.color};margin-right:4px;"></span>${b.label}
+      </div>
+      <div class="text-sm font-bold" style="color:${v.n ? b.color : '#6b7280'};font-variant-numeric:tabular-nums;">$${v.amt.toLocaleString()}</div>
+      <div class="text-xs text-gray-500">${v.n} 件</div>
+    </div>`;
+  }).join('');
+
+  // 依客戶彙總，欠最多的排前面
+  const byCus = {};
+  rows.forEach(r => {
+    const c = r.it['客戶'] || '(未知客戶)';
+    if (!byCus[c]) byCus[c] = { n: 0, amt: 0, oldest: 0, items: [] };
+    const g = byCus[c];
+    g.n++; g.amt += r.amt; g.oldest = Math.max(g.oldest, r.days); g.items.push(r);
+  });
+
+  const cusCards = Object.entries(byCus)
+    .sort((a, b) => b[1].amt - a[1].amt)
+    .map(([name, g], idx) => {
+      const id = `ar_${idx}`;
+      const color = AR_BUCKETS[bucketOf(g.oldest)].color;
+      const lines = g.items.map(r => `
+        <div class="flex justify-between text-sm py-1 border-b border-gray-700">
+          <span class="text-gray-300" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${r.it['品名'] || ''}${r.it['規格'] ? ' · ' + r.it['規格'] : ''}
+            <span class="text-xs text-gray-500">（${arStage(r.it)}）</span>
+          </span>
+          <span class="shrink-0 ml-2" style="color:${AR_BUCKETS[bucketOf(r.days)].color};font-variant-numeric:tabular-nums;">
+            ${r.days} 天 · $${r.amt.toLocaleString()}
+          </span>
+        </div>`).join('');
+      return `
+      <div class="card">
+        <div class="flex justify-between items-center cursor-pointer"
+             onclick="document.getElementById('${id}').classList.toggle('hidden')">
+          <div style="min-width:0;">
+            <div class="font-semibold" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</div>
+            <div class="text-xs text-gray-400">${g.n} 件・最久 <span style="color:${color};font-weight:700;">${g.oldest} 天</span></div>
+          </div>
+          <span class="text-amber-400 font-bold shrink-0 ml-2">$${g.amt.toLocaleString()} ▾</span>
+        </div>
+        <div id="${id}" class="hidden mt-2">${lines}</div>
+      </div>`;
+    }).join('');
+
+  // 卡在哪一關的小計
+  const stages = {};
+  rows.forEach(r => {
+    const st = arStage(r.it);
+    if (!stages[st]) stages[st] = { n: 0, amt: 0 };
+    stages[st].n++; stages[st].amt += r.amt;
+  });
+  const stageLine = ['待交貨', '待請款', '已請款未收']
+    .filter(k => stages[k])
+    .map(k => `${k} ${stages[k].n} 件 $${stages[k].amt.toLocaleString()}`)
+    .join('　｜　');
+
+  return `
+  <div class="card">
+    <div class="flex justify-between items-end mb-1">
+      <span class="text-gray-300 font-semibold">應收總額</span>
+      <span class="text-amber-400 font-bold text-2xl">$${total.toLocaleString()}</span>
+    </div>
+    <div class="text-xs text-gray-500 mb-3">${rows.length} 件・${stageLine}</div>
+    <div class="flex" style="height:8px;border-radius:99px;overflow:hidden;background:#374151;">${stackBar}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-top:10px;">${bucketLegend}</div>
+  </div>
+  ${cusCards}`;
 }
 
 // ── 管理員：檢視任一員工的傭金頁 ─────────────
