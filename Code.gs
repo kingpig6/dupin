@@ -1259,6 +1259,80 @@ function importHakerJune2026() {
 }
 
 // ── 哈客 2026-06 訂單匯入 END ────────────────
+// ── 試算表自動備份 ────────────────────────────
+// Google 試算表本身有版本記錄，但如果哪天腳本把整欄寫壞、或誤刪工作表，
+// 從版本記錄還原會很痛。這裡每週複製一整份到 Drive，出事直接開副本。
+//
+// 安裝方式：在 Apps Script 介面選 installBackupTrigger 執行一次即可（只需一次）。
+// 想立刻備份一份：選 backupSpreadsheet 執行。
+const BACKUP_FOLDER_NAME = '獨品工坊備份';
+const BACKUP_KEEP = 12;            // 保留最近幾份（每週一份 ≈ 三個月）
+
+function getBackupFolder() {
+  const root = getRootFolder();
+  const f = root.getFoldersByName(BACKUP_FOLDER_NAME);
+  return f.hasNext() ? f.next() : root.createFolder(BACKUP_FOLDER_NAME);
+}
+
+function backupSpreadsheet() {
+  try {
+    const folder = getBackupFolder();
+    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm');
+    const name = `獨品工坊開單_備份_${stamp}`;
+    DriveApp.getFileById(SHEET_ID).makeCopy(name, folder);
+
+    // 清掉過舊的備份：只留最近 BACKUP_KEEP 份
+    const files = [];
+    const it = folder.getFiles();
+    while (it.hasNext()) {
+      const f = it.next();
+      files.push({ file: f, at: f.getDateCreated().getTime() });
+    }
+    files.sort((a, b) => b.at - a.at);
+    let removed = 0;
+    for (let i = BACKUP_KEEP; i < files.length; i++) { files[i].file.setTrashed(true); removed++; }
+
+    const msg = `備份完成：${name}（資料夾共 ${Math.min(files.length, BACKUP_KEEP)} 份，清掉 ${removed} 份舊的）`;
+    Logger.log(msg);
+    return msg;
+  } catch (e) {
+    // 備份失敗要看得見，不然會以為一直有在備份
+    const msg = '備份失敗：' + (e && e.message ? e.message : e);
+    Logger.log(msg);
+    try {
+      const owner = Session.getEffectiveUser().getEmail();
+      if (owner) MailApp.sendEmail(owner, '【獨品工坊】試算表備份失敗', msg);
+    } catch (e2) {}
+    throw e;
+  }
+}
+
+// 安裝每週備份觸發器（每週日凌晨 3 點）。重複執行不會裝出兩個。
+function installBackupTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'backupSpreadsheet') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('backupSpreadsheet')
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.SUNDAY)
+    .atHour(3)
+    .create();
+  const msg = '已安裝每週備份：每週日凌晨 3 點自動複製一份到 Drive 的「' + BACKUP_FOLDER_NAME + '」資料夾';
+  Logger.log(msg);
+  return msg;
+}
+
+// 想停掉自動備份時執行這個
+function removeBackupTrigger() {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'backupSpreadsheet') { ScriptApp.deleteTrigger(t); n++; }
+  });
+  const msg = `已移除 ${n} 個備份觸發器`;
+  Logger.log(msg);
+  return msg;
+}
+
 // ── 一次性：既有資料補上交貨狀態 ──────────────
 // 使用方式：在 Apps Script 介面選擇 backfillDelivery，按執行（只需跑一次）
 // 規則：已開請款單或已收款者視為「已交貨」（交貨日期沿用完工日期），其餘一律「未交貨」。
