@@ -3896,8 +3896,6 @@ function renderProfitReport(from, to) {
     <div id="${id}" class="hidden mb-3">${body}</div>`;
 
   return `
-  ${renderYearChart()}
-
   <div class="card">
     <div class="flex justify-between items-center mb-3 cursor-pointer" onclick="document.getElementById('pr_income').classList.toggle('hidden')">
       <span class="text-gray-300 font-semibold">收入（完工 ${incomeItems.length} 件・不含接單）</span>
@@ -3937,7 +3935,9 @@ function renderProfitReport(from, to) {
       </div>
       <span class="text-xl font-bold ${estColor}">$${estProfit.toLocaleString()}</span>
     </div>
-  </div>`;
+  </div>
+
+  ${renderYearChart()}`;
 }
 
 // 結算一位師傅：結算傭金/抽成項目 + 寄 Gmail 通知本人（含明細）
