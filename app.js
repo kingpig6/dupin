@@ -52,6 +52,9 @@ let state = {
   viewCustomer: null, // 目前查看的客戶名稱
   viewWorker: null,   // 目前查看的師傅（進行中依師傅分組時）
   viewSection: null,  // 從哪個區塊進入（active/done/delivered/invoiced/paid）
+  itemsFrom: '',      // 後端載入視窗的起點（早於此日期的資料要另外補撈）
+  archive: [],        // 補撈回來的歷史項目（只給統計用，不進訂單列表）
+  archiveFrom: '',    // 已補撈的最早日期（空字串＝尚未補撈過）
   editCustomer: null,
   loading: false,
   search: '',
@@ -273,6 +276,7 @@ function saveCache() {
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify({
       items: state.items,
+      itemsFrom: state.itemsFrom,
       myFees: state.myFees,
       customers: state.customers,
       settings: state.settings,
@@ -294,6 +298,7 @@ function loadCache() {
     if (!raw) return false;
     const cache = JSON.parse(raw);
     state.items       = cache.items       || [];
+    state.itemsFrom   = cache.itemsFrom   || '';
     state.myFees      = cache.myFees      || [];
     state.customers   = cache.customers   || [];
     state.settings    = cache.settings    || {};
@@ -318,6 +323,7 @@ async function legacyLoadBundle(readOpts) {
   if (!results.some(r => r && r.data)) return { error: '連線失敗' };
   const data = {};
   names.forEach((n, i) => { data[n] = (results[i] && results[i].data) || []; });
+  if (results[0] && results[0].itemsFrom) data['_itemsFrom'] = results[0].itemsFrom;
   data['設定'] = (settings && settings.data) || {};
   if (auth.email && !isAdmin()) {
     const mf = await api('getMyFees', null, {}, readOpts);
@@ -387,6 +393,9 @@ async function loadAll(opts = {}) {
   }
 
   if (wi.data)   state.items          = wi.data.map(normalizeItem);
+  // 後端只送「未結案＋最近 N 個月」，把視窗起點記下來；
+  // 統計查到更早的期間時，statsItems() 會自動補撈（見 ensureStatsRange）
+  if (b['_itemsFrom']) state.itemsFrom = b['_itemsFrom'];
   if (c.data)    state.customers      = c.data;
   if (s.data)    state.settings       = s.data;
   if (exp.data)  state.expenses       = exp.data;
@@ -417,6 +426,54 @@ async function loadAll(opts = {}) {
   if (deferRender) { _pendingFreshData = true; return; }
   _pendingFreshData = false;
   render();
+}
+
+// ── 統計資料來源：日常視窗 ＋ 補撈回來的歷史 ─────────────
+// 訂單列表只用 state.items（近期＋未結案，載入快）；
+// 業績／損益／傭金這類會查歷史的，一律改用 statsItems()。
+function statsItems() {
+  if (!state.archive.length) return state.items;
+  const seen = {};
+  const out = [];
+  state.items.forEach(it => { seen[String(it['工作ID'])] = true; out.push(it); });
+  state.archive.forEach(it => {
+    const k = String(it['工作ID']);
+    if (!seen[k]) { seen[k] = true; out.push(it); }
+  });
+  // 排回試算表的原始順序：工作ID 是建立當下的時間戳，遞增。
+  // 有些報表（例如已結傭金）沒有自己排序，直接吃陣列順序，
+  // 不排的話畫面上的項目順序會跟以前不一樣。
+  out.sort((a, b) => {
+    const ka = String(a['工作ID']), kb = String(b['工作ID']);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  return out;
+}
+
+// 查詢區間若早於已載入的視窗，就去後端補撈那段歷史。
+// 補過的範圍會記在 state.archiveFrom，同一段不會重複撈。
+async function ensureStatsRange(from) {
+  if (!from) return;                       // 沒指定起日：維持現況，不主動撈全部
+  if (!state.itemsFrom) return;            // 後端沒套視窗（全送）：不需要補
+  if (from >= state.itemsFrom) return;     // 要查的期間都在視窗內
+  if (state.archiveFrom && from >= state.archiveFrom) return;  // 已經撈過更早的了
+
+  const to = state.itemsFrom;              // 只補視窗之前那一段，視窗內的用現成的
+  const r = await api('getItemsRange', null, { from, to }, { silent: true });
+  if (!r || r.error || !r.data) {
+    showToast('歷史資料載入失敗，統計可能不完整', 'error');
+    return;
+  }
+  const fetched = r.data.map(normalizeItem);
+  // 與既有歸檔合併去重（可能先查 2025 再查 2024）
+  const seen = {};
+  const merged = [];
+  fetched.concat(state.archive).forEach(it => {
+    const k = String(it['工作ID']);
+    if (!seen[k]) { seen[k] = true; merged.push(it); }
+  });
+  state.archive = merged;
+  state.archiveFrom = state.archiveFrom && state.archiveFrom < from ? state.archiveFrom : from;
 }
 
 function normalizeItem(it) {
@@ -462,6 +519,14 @@ function showView(view, data = null) {
   // 切換畫面時順手再抓一次；同樣不重畫，避免回應到達時打斷剛開始的瀏覽，
   // 抓到的內容會在下次切換畫面時呈現。有節流，快速連點分頁不會狂打後端。
   backgroundRefresh(false, { deferRender: true });
+}
+
+// 寫入後的重畫：前端已經樂觀更新過，不需要再抓一次整包資料。
+// 原本這些地方都呼叫 showView()，而 showView 每次都會順手 backgroundRefresh，
+// 等於每改一個欄位就多打一次 getBundle（實測：一個動作 2 次請求）。
+function rerender() {
+  _pendingFreshData = false;
+  render();
 }
 
 function goBack() {
@@ -572,9 +637,12 @@ function renderOrders() {
 // 員工視角安全過濾：不管 state.items 從哪裡來（快取／登入 token 尚未就緒時的回應），
 // 前端一律再擋一次，只留「進行中且未指派」的項目，避免登入瞬間的競速狀態短暫露出全部資料
 function visibleItems() {
-  if (isAdmin()) return state.items;
+  // 用 statsItems()：平常等於 state.items；補撈過歷史後，
+  // 「已收款」區就能一併顯示更早的紀錄（見 loadOlderRecords）
+  const src = statsItems();
+  if (isAdmin()) return src;
   const me = String(auth.name || '').trim();
-  return state.items.filter(it => {
+  return src.filter(it => {
     const w = String(it['負責師傅'] || '').trim();
     if (!w) return it['進度'] !== '完成';   // 未指派：只看進行中
     return me && w === me;                   // 已指派：只看自己的（含完成）
@@ -730,7 +798,40 @@ function renderOrdersContent() {
   ${sectionBody(invoicedItems, 'invoiced', '暫無已開請款單工作', 'invoiced')}
 
   ${sectionHeader('已收款', paidItems.length, 'paid')}
-  ${sectionBody(paidItems, 'paid', '暫無已收款工作', 'paid')}`;
+  ${sectionBody(paidItems, 'paid', '暫無已收款工作', 'paid')}
+  ${olderRecordsHint()}`;
+}
+
+// 日常只載入最近一段期間的資料（後端 ITEM_WINDOW_MONTHS）。
+// 已收款區塊底部給一個入口，讓你需要時把更早的紀錄補進來。
+function olderRecordsHint() {
+  if (!state.itemsFrom) return '';                    // 後端沒套視窗：全部都在
+  if (!sectionOpen.paid) return '';                   // 已收款區沒展開就不佔版面
+  if (state.archiveFrom) {
+    return `<p class="text-xs text-gray-500 text-center pb-4">已載入 ${state.archiveFrom} 之後的紀錄</p>`;
+  }
+  return `
+    <div class="text-center pb-4">
+      <p class="text-xs text-gray-500 mb-2">目前顯示 ${state.itemsFrom} 之後的紀錄</p>
+      <button class="btn btn-ghost text-sm" onclick="loadOlderRecords(this)">載入更早的紀錄</button>
+    </div>`;
+}
+
+// 往前多撈兩年的歷史進來（統計頁查歷史時也會共用這份資料）
+async function loadOlderRecords(btn) {
+  if (!state.itemsFrom) return;
+  const d = new Date(state.itemsFrom);
+  d.setFullYear(d.getFullYear() - 2);
+  const from = d.toISOString().slice(0, 10);
+  // 不透過 withBtn 包住工作本身：withBtn 在沒有按鈕時會整段跳過
+  if (btn) { btn.disabled = true; btn.textContent = '載入中…'; }
+  try {
+    await ensureStatsRange(from);
+    rerender();
+    showToast(`已載入 ${from} 之後的紀錄`);
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = '載入更早的紀錄'; }
+  }
 }
 
 function openCustomer(name, section) {
@@ -964,13 +1065,13 @@ async function cycleProgress(itemId, newProg) {
   }
 
   stampLocalModify(it);
-  showView('customerDetail', state.viewCustomer);
+  rerender();
   saveCache();
   const r = await api('update', '工作項目', { key: itemId, data });
   if (r.error) {
     it['進度']     = prev;
     it['完工日期'] = prevDate;
-    showView('customerDetail', state.viewCustomer);
+    rerender();
     saveCache();
     showToast('更新失敗，已還原', 'error');
   } else {
@@ -1003,13 +1104,13 @@ async function setDelivery(itemId, newState) {
   }
 
   stampLocalModify(it);
-  showView('customerDetail', state.viewCustomer);
+  rerender();
   saveCache();
   const r = await api('update', '工作項目', { key: itemId, data });
   if (r.error) {
     it['交貨狀態'] = prevState;
     it['交貨日期'] = prevDate;
-    showView('customerDetail', state.viewCustomer);
+    rerender();
     saveCache();
     showToast('更新失敗，已還原', 'error');
   } else {
@@ -1030,21 +1131,17 @@ async function batchMarkDelivered(itemIds) {
     it['交貨狀態'] = '已交貨';
     if (!it['交貨日期']) it['交貨日期'] = today;
   });
-  showView('customerDetail', state.viewCustomer);
+  rerender();
   saveCache();
-  showToast(`正在更新 ${itemIds.length} 件...`);
-  const results = await Promise.all(itemIds.map(id =>
-    api('update', '工作項目', { key: id, data: { '交貨狀態': '已交貨' } })
-      .then(r => ({ id, ok: !!(r && !r.error) }))
-  ));
-  const failed = results.filter(r => !r.ok);
+  const { failedIds } = await runBatchUpdate(itemIds, { '交貨狀態': '已交貨' }, '標記交貨中');
+  const failed = failedIds;
   if (failed.length) {
-    failed.forEach(f => {
-      const it = state.items.find(x => String(x['工作ID']) === String(f.id));
-      if (it && prevs[f.id]) Object.assign(it, prevs[f.id]);
+    failed.forEach(id => {
+      const it = state.items.find(x => String(x['工作ID']) === String(id));
+      if (it && prevs[id]) Object.assign(it, prevs[id]);
     });
     saveCache();
-    showView('customerDetail', state.viewCustomer);
+    rerender();
     showToast(`${itemIds.length - failed.length} 件成功、${failed.length} 件失敗（已還原，請重試）`, 'error');
   } else {
     showToast(`已標記交貨（${itemIds.length} 件）`);
@@ -1058,12 +1155,12 @@ async function updateItemField(itemId, field, value) {
   const prev = it[field];
   it[field] = value;
   stampLocalModify(it);
-  showView('customerDetail', state.viewCustomer);
+  rerender();
   saveCache();
   const r = await api('update', '工作項目', { key: itemId, data: { [field]: value } });
   if (r.error) {
     it[field] = prev;
-    showView('customerDetail', state.viewCustomer);
+    rerender();
     saveCache();
     showToast('更新失敗，已還原', 'error');
   } else {
@@ -1122,7 +1219,7 @@ function editItem(id) {
     <div class="flex justify-between items-center mb-3">
       <span class="text-xs text-gray-400">金額：<span id="ei_amt" class="text-amber-400">$${Number(it['金額']).toLocaleString()}</span></span>
       <div class="flex gap-2">
-        <button onclick="showView('customerDetail',state.viewCustomer)" class="btn btn-ghost text-sm px-3">取消</button>
+        <button onclick="rerender()" class="btn btn-ghost text-sm px-3">取消</button>
         <button onclick="saveItem('${id}',this)" class="btn btn-primary text-sm px-3">儲存</button>
       </div>
     </div>
@@ -1194,7 +1291,7 @@ async function saveItem(id, btn) {
   };
   Object.assign(it, data);
   stampLocalModify(it);
-  showView('customerDetail', state.viewCustomer);
+  rerender();
   saveCache();
   await withBtn(btn, async () => {
     await api('update', '工作項目', { key: id, data });
@@ -1215,13 +1312,13 @@ async function deleteItem(id) {
   // 樂觀移除：先從畫面拿掉，但保留備份；後端確認失敗就還原，避免「畫面刪掉了、表單還在」
   const removed = state.items.find(x => String(x['工作ID']) === String(id));
   state.items = state.items.filter(x => String(x['工作ID']) !== String(id));
-  showView('customerDetail', state.viewCustomer);
+  rerender();
   saveCache();
   const r = await api('delete', '工作項目', { key: id });
   if (!r || r.error) {
     if (removed) state.items.push(removed);
     saveCache();
-    showView('customerDetail', state.viewCustomer);
+    rerender();
     showToast('刪除失敗，已還原：' + ((r && r.error) || '網路錯誤'), 'error');
   }
 }
@@ -1306,7 +1403,7 @@ async function confirmDuplicate(id, btn) {
     if (r.error) { showToast('複製失敗：' + r.error, 'error'); return; }
     state.items.push(...copies.map(normalizeItem));
     saveCache();
-    showView('customerDetail', state.viewCustomer);
+    rerender();
     showToast(`已複製 ${n} 件 ✓`);
   });
 }
@@ -1464,6 +1561,61 @@ async function deleteRefPhoto(itemId, idx) {
   saveCache();
 }
 
+// ── 批次寫入共用工具 ──────────────────────────
+// 後端 updateBatch 一次請求就能改多列（一次拿鎖、一次讀表），
+// 原本逐筆打 update 的做法 40 件要 40 次請求。
+// 仍然分批送：單次請求太大容易超過 Apps Script 執行時間，而且分批才能顯示進度。
+const BATCH_CHUNK = 50;
+
+// 在畫面上顯示批次進度（沒有容器就退回 toast）
+function showBatchProgress(text, doneN, totalN) {
+  let bar = document.getElementById('batchProgress');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'batchProgress';
+    bar.className = 'fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-gray-800 border border-gray-600 rounded-lg px-4 py-2 text-sm text-white shadow-lg';
+    document.body.appendChild(bar);
+  }
+  const pct = totalN ? Math.round(doneN / totalN * 100) : 0;
+  bar.innerHTML = `
+    <div class="mb-1">${text}　<span class="text-amber-400 font-bold">${doneN} / ${totalN}</span></div>
+    <div style="height:6px;background:#374151;border-radius:99px;overflow:hidden;">
+      <div style="height:100%;width:${pct}%;background:#f59e0b;transition:width .2s;"></div>
+    </div>`;
+}
+
+function hideBatchProgress() {
+  document.getElementById('batchProgress')?.remove();
+}
+
+// updates: [{ key, data }, ...]，每筆可以帶不同的欄位。回傳 { okIds, failedIds }
+async function runBatchUpdates(updates, label) {
+  const okIds = [], failedIds = [];
+  let done = 0;
+  showBatchProgress(label, 0, updates.length);
+  for (let i = 0; i < updates.length; i += BATCH_CHUNK) {
+    const chunk = updates.slice(i, i + BATCH_CHUNK);
+    const r = await api('updateBatch', '工作項目', { updates: chunk });
+    if (r && !r.error) {
+      // 後端回報找不到的主鍵算失敗，其餘算成功
+      const miss = {};
+      (r.missing || []).forEach(k => { miss[String(k)] = true; });
+      chunk.forEach(u => (miss[String(u.key)] ? failedIds : okIds).push(u.key));
+    } else {
+      chunk.forEach(u => failedIds.push(u.key));
+    }
+    done += chunk.length;
+    showBatchProgress(label, done, updates.length);
+  }
+  hideBatchProgress();
+  return { okIds, failedIds };
+}
+
+// itemIds 全部套用同一組 data
+function runBatchUpdate(itemIds, data, label) {
+  return runBatchUpdates(itemIds.map(id => ({ key: id, data: data })), label);
+}
+
 // ── 批量收款 ──────────────────────────────────
 async function batchMarkPaid(itemIds) {
   if (!confirm(`確定將 ${itemIds.length} 件工作項目標記為「已收款」？`)) return;
@@ -1472,22 +1624,18 @@ async function batchMarkPaid(itemIds) {
     const it = state.items.find(x => String(x['工作ID']) === String(id));
     if (it) it['收款狀態'] = '已收款';
   });
-  showView('customerDetail', state.viewCustomer);
+  rerender();
   saveCache();
-  showToast(`正在更新 ${itemIds.length} 件...`);
-  const results = await Promise.all(itemIds.map(id =>
-    api('update', '工作項目', { key: id, data: { '收款狀態': '已收款' } })
-      .then(r => ({ id, ok: !!(r && !r.error) }))
-  ));
+  const { failedIds } = await runBatchUpdate(itemIds, { '收款狀態': '已收款' }, '標記收款中');
   // 逐筆確認：失敗的還原成未收款，避免帳面顯示已收、實際沒寫進去
-  const failed = results.filter(r => !r.ok);
+  const failed = failedIds;
   if (failed.length) {
-    failed.forEach(f => {
-      const it = state.items.find(x => String(x['工作ID']) === String(f.id));
+    failed.forEach(id => {
+      const it = state.items.find(x => String(x['工作ID']) === String(id));
       if (it) it['收款狀態'] = '未收款';
     });
     saveCache();
-    showView('customerDetail', state.viewCustomer);
+    rerender();
     showToast(`${itemIds.length - failed.length} 件成功、${failed.length} 件失敗（已還原，請重試）`, 'error');
   } else {
     showToast(`已收款完成（${itemIds.length} 件）`);
@@ -2611,7 +2759,7 @@ function effectiveFee(it) { return workerIncome(it); }
 
 function commissionFees() {
   if (adminCommissionWorker) {
-    return state.items.filter(it => String(it['負責師傅'] || '').trim() === adminCommissionWorker);
+    return statsItems().filter(it => String(it['負責師傅'] || '').trim() === adminCommissionWorker);
   }
   return state.myFees;
 }
@@ -3070,24 +3218,26 @@ function queryMyCommission() {
     </div>`;
 }
 
-function toggleStatsCus() {
+async function toggleStatsCus() {
   const el = document.getElementById('statsByCustomer');
   const ar = document.getElementById('arrow-statsCus');
   el.classList.toggle('hidden');
   ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
   if (!el.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
+    await ensureStatsRange(from);
     el.innerHTML = renderStatsByCustomer(from, to);
   }
 }
 
-function toggleStatsWorker() {
+async function toggleStatsWorker() {
   const el = document.getElementById('statsByWorker');
   const ar = document.getElementById('arrow-statsWorker');
   el.classList.toggle('hidden');
   ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
   if (!el.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
+    await ensureStatsRange(from);
     el.innerHTML = renderStatsByWorker(from, to);
   }
 }
@@ -3106,7 +3256,7 @@ function setQueryMonth(month) {
   queryStats();
 }
 
-function toggleProfitReport() {
+async function toggleProfitReport() {
   const el = document.getElementById('profitReport');
   const ar = document.getElementById('arrow-profitReport');
   if (!el) return;
@@ -3114,6 +3264,7 @@ function toggleProfitReport() {
   ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
   if (!el.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
+    await ensureStatsRange(from);
     el.innerHTML = renderProfitReport(from, to);
   }
 }
@@ -3126,13 +3277,14 @@ function toggleWorkerFeePending() {
   if (!el.classList.contains('hidden')) el.innerHTML = renderWorkerFeePending();
 }
 
-function toggleWorkerFeePaid() {
+async function toggleWorkerFeePaid() {
   const el = document.getElementById('workerFeePaid');
   const ar = document.getElementById('arrow-workerFeePaid');
   el.classList.toggle('hidden');
   ar.textContent = el.classList.contains('hidden') ? '▼' : '▲';
   if (!el.classList.contains('hidden')) {
     const { from, to } = getStatsFilter();
+    await ensureStatsRange(from);
     el.innerHTML = renderWorkerFeePaid(from, to);
   }
 }
@@ -3140,7 +3292,7 @@ function toggleWorkerFeePaid() {
 function renderStatsByCustomer(from, to) {
   const map = {};
   const itemsMap = {};
-  state.items.filter(it => !from || (it['完工日期'] && it['完工日期'] >= from && it['完工日期'] <= to)).forEach(it => {
+  statsItems().filter(it => !from || (it['完工日期'] && it['完工日期'] >= from && it['完工日期'] <= to)).forEach(it => {
     const c = it['客戶'] || '(未知)';
     map[c] = (map[c] || 0) + Number(it['金額'] || 0);
     if (!itemsMap[c]) itemsMap[c] = [];
@@ -3170,7 +3322,7 @@ function renderStatsByCustomer(from, to) {
 function renderStatsByWorker(from, to) {
   const map = {};
   const itemsMap = {};
-  state.items.filter(it => it['進度'] === '完成' && (!from || (it['完工日期'] >= from && it['完工日期'] <= to))).forEach(it => {
+  statsItems().filter(it => it['進度'] === '完成' && (!from || (it['完工日期'] >= from && it['完工日期'] <= to))).forEach(it => {
     const w = it['負責師傅'] || '(未指定)';
     if (!map[w]) map[w] = { count: 0, total: 0 };
     map[w].count++;
@@ -3211,7 +3363,7 @@ function renderWorkerFeePending() {
   const mEnd   = (sToEl && sToEl.value)   || dmEnd;
 
   // 傭金/抽成待付：依師傅分組（未支付一律列入，不受日期限制）
-  const pending = state.items.filter(it =>
+  const pending = statsItems().filter(it =>
     it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && it['費用類型'] && bossPayable(it) !== 0
   );
   const byWorker = {};
@@ -3336,7 +3488,7 @@ async function saveWorkerSalary(name, el) {
 
 function renderWorkerFeePaid(from, to) {
   // 已支付以「完工月份」歸類（非付款月）
-  const paid = state.items.filter(it => {
+  const paid = statsItems().filter(it => {
     const d = it['完工日期'] || '';
     return it['費用支付狀態'] === '已支付' && (!from || (d >= from && d <= to));
   });
@@ -3382,19 +3534,19 @@ function renderProfitReport(from, to) {
     </div>`;
 
   // ── 收入：完工項目（不含接單，因為接單的錢是員工先收，公司只收返還）──
-  const incomeItems = state.items.filter(it =>
+  const incomeItems = statsItems().filter(it =>
     it['進度'] === '完成' && it['費用類型'] !== '接單' && inRange(it['完工日期'])
   ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const revenue = incomeItems.reduce((s, it) => s + Number(it['金額'] || 0), 0);
 
   // ── 接單返還（已收回）：接單 已支付，成本以完工月份歸類（非付款月）──
-  const referralPaid = state.items.filter(it =>
+  const referralPaid = statsItems().filter(it =>
     it['費用類型'] === '接單' && it['費用支付狀態'] === '已支付' && inRange(it['完工日期'])
   ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const referralIncome = referralPaid.reduce((s, it) => s + returnAmt(it), 0);
 
   // ── 人員費用：已支付的傭金/抽成（不含接單），以完工月份歸類 ──
-  const feeItems = state.items.filter(it =>
+  const feeItems = statsItems().filter(it =>
     it['費用類型'] && it['費用類型'] !== '接單' && it['費用支付狀態'] === '已支付' && inRange(it['完工日期'])
   ).sort((a, b) => (a['完工日期'] > b['完工日期'] ? -1 : 1));
   const totalFees = feeItems.reduce((s, it) => s + commissionAmt(it), 0);
@@ -3410,13 +3562,13 @@ function renderProfitReport(from, to) {
   const profitColor = profit >= 0 ? 'text-green-400' : 'text-red-400';
 
   // ── 未結算（全部尚未支付，不受查詢日期限制）──
-  const pendingFeeItems = state.items.filter(it =>
+  const pendingFeeItems = statsItems().filter(it =>
     it['進度'] === '完成' && it['費用支付狀態'] === '未支付' &&
     it['費用類型'] && it['費用類型'] !== '接單' && commissionAmt(it) > 0
   );
   const pendingFee = pendingFeeItems.reduce((s, it) => s + commissionAmt(it), 0);
 
-  const pendingRefItems = state.items.filter(it =>
+  const pendingRefItems = statsItems().filter(it =>
     it['進度'] === '完成' && it['費用支付狀態'] === '未支付' && it['費用類型'] === '接單'
   );
   const pendingRef = pendingRefItems.reduce((s, it) => s + returnAmt(it), 0);
@@ -3528,20 +3680,26 @@ async function settleWorker(name, btn) {
   btn.disabled = true;
   btn.textContent = '結算中…';
   const today = todayStr();
-  // 1) 結算傭金/抽成項目
-  for (const id of ids) {
-    const it = state.items.find(x => String(x['工作ID']) === String(id));
+  // 1) 結算傭金/抽成項目（每筆金額不同，用批次更新一次送出，
+  //    原本是 for 迴圈逐筆 await，20 筆就是 20 次請求）
+  const settleUpdates = ids.map(id => {
+    const it = statsItems().find(x => String(x['工作ID']) === String(id));
     const data = { '費用支付狀態': '已支付', '費用支付日期': today };
     if (it) {
       if (it['費用類型'] === '接單') { data['費用金額'] = referralIncome(it); data['返還金額'] = returnAmt(it); }
       else { const c = commissionAmt(it); if (c > 0) data['費用金額'] = c; }
     }
-    await api('update', '工作項目', { key: id, data });
-    if (it) {
+    return { key: id, data: data };
+  });
+  if (settleUpdates.length) {
+    await runBatchUpdates(settleUpdates, '結算中');
+    settleUpdates.forEach(u => {
+      const it = statsItems().find(x => String(x['工作ID']) === String(u.key));
+      if (!it) return;
       it['費用支付狀態'] = '已支付'; it['費用支付日期'] = today;
-      if (data['費用金額'] != null) it['費用金額'] = data['費用金額'];
-      if (data['返還金額'] != null) it['返還金額'] = data['返還金額'];
-    }
+      if (u.data['費用金額'] != null) it['費用金額'] = u.data['費用金額'];
+      if (u.data['返還金額'] != null) it['返還金額'] = u.data['返還金額'];
+    });
   }
   // 2) 記一筆結算記錄（該月該師傅已結清 → 待支付移除、薪資/餐費一併歸零）
   const sFromEl = document.getElementById('s_from');
@@ -3619,10 +3777,12 @@ function getStatsFilter() {
   return { from, to, cus };
 }
 
-function queryStats() {
+async function queryStats() {
   const { from, to, cus } = getStatsFilter();
+  // 查詢區間早於載入視窗時，先把那段歷史補回來（只會撈一次）
+  await ensureStatsRange(from);
 
-  const filtered = state.items.filter(it => {
+  const filtered = statsItems().filter(it => {
     const d = it['完工日期'];
     return d && d >= from && d <= to && (!cus || it['客戶'] === cus);
   });
